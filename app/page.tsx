@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import Image from 'next/image';
 import { jsPDF } from 'jspdf';
 import { 
@@ -28,10 +28,33 @@ import {
   ZoomOut,
   HelpCircle,
   LogOut,
-  UserCheck
+  UserCheck,
+  ChevronLeft,
+  ChevronRight,
+  Utensils,
+  Cloud,
+  CloudUpload,
+  RefreshCw,
+  LogIn,
+  Database,
+  CheckCircle2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '@/lib/utils';
+import { auth, loginWithGoogle, logoutUser, testConnection } from '@/lib/firebase';
+import { 
+  fetchMilitariesFromFirestore, 
+  syncMilitariesToFirestore,
+  fetchAbsencesFromFirestore, 
+  syncAbsencesToFirestore,
+  fetchRosterFromFirestore, 
+  syncRosterToFirestore,
+  fetchLogsFromFirestore, 
+  syncLogsToFirestore,
+  fetchSettingsFromFirestore, 
+  syncSettingsToFirestore 
+} from '@/lib/firestoreSync';
+import { onAuthStateChanged, User } from 'firebase/auth';
 
 // ==========================================
 // TYPES & SCHEMAS
@@ -148,7 +171,7 @@ const initialMilitary: Military[] = [
     name: 'COELHO',
     fullName: 'JOAO VITOR COELHO SILVEIRA',
     matricula: '6',
-    specialty: 'Auxiliar do Escritório',
+    specialty: 'Auxiliar do Copeiro de Dia',
     status: 'Ativo',
     type: 'Ambas',
     dutyCount: 0
@@ -260,34 +283,156 @@ const initialMilitary: Military[] = [
 
 const initialAbsences: Absence[] = [];
 
-const ALL_DAYS = [
-  'Qua 01', 'Qui 02', 'Sex 03', 'Sáb 04', 'Dom 05', 'Seg 06', 'Ter 07',
-  'Qua 08', 'Qui 09', 'Sex 10', 'Sáb 11', 'Dom 12', 'Seg 13', 'Ter 14',
-  'Qua 15', 'Qui 16', 'Sex 17', 'Sáb 18', 'Dom 19', 'Seg 20', 'Ter 21',
-  'Qua 22', 'Qui 23', 'Sex 24', 'Sáb 25', 'Dom 26', 'Seg 27', 'Ter 28',
-  'Qua 29', 'Qui 30', 'Sex 31'
+// ==========================================
+// DATE UTILITIES (DD/MM/AAAA & CURRENT WEEK)
+// ==========================================
+
+const formatDateDDMMAAAA = (date: Date): string => {
+  const dd = String(date.getDate()).padStart(2, '0');
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const yyyy = date.getFullYear();
+  return `${dd}/${mm}/${yyyy}`;
+};
+
+const formatDateISO = (date: Date): string => {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+};
+
+const parseDateAny = (str: string): Date | null => {
+  if (!str) return null;
+  const ddmmyyyy = str.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+  if (ddmmyyyy) {
+    return new Date(parseInt(ddmmyyyy[3], 10), parseInt(ddmmyyyy[2], 10) - 1, parseInt(ddmmyyyy[1], 10));
+  }
+  const yyyymmdd = str.match(/(\d{4})-(\d{2})-(\d{2})/);
+  if (yyyymmdd) {
+    return new Date(parseInt(yyyymmdd[1], 10), parseInt(yyyymmdd[2], 10) - 1, parseInt(yyyymmdd[3], 10));
+  }
+  return null;
+};
+
+const getMondayOfWeek = (d: Date = new Date()): Date => {
+  const date = new Date(d);
+  const day = date.getDay(); // 0 is Sunday, 1 is Monday, ...
+  const diff = day === 0 ? -6 : 1 - day;
+  date.setDate(date.getDate() + diff);
+  date.setHours(0, 0, 0, 0);
+  return date;
+};
+
+const getWeekDates = (monday: Date): string[] => {
+  const dates: string[] = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    dates.push(formatDateDDMMAAAA(d));
+  }
+  return dates;
+};
+
+const getDaysInMonth = (year: number, month: number): string[] => {
+  const days: string[] = [];
+  const date = new Date(year, month, 1);
+  while (date.getMonth() === month) {
+    days.push(formatDateDDMMAAAA(date));
+    date.setDate(date.getDate() + 1);
+  }
+  return days;
+};
+
+const WEEKDAY_NAMES_PT = [
+  'Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'
 ];
+
+const WEEKDAY_SHORT_PT = [
+  'Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'
+];
+
+const getDayWeekdayShort = (dayStr: string): string => {
+  const d = parseDateAny(dayStr);
+  if (!d) return '';
+  return WEEKDAY_SHORT_PT[d.getDay()];
+};
+
+const getDayWeekdayLong = (dayStr: string): string => {
+  const d = parseDateAny(dayStr);
+  if (!d) return '';
+  return WEEKDAY_NAMES_PT[d.getDay()];
+};
+
+const isDayWeekend = (dayStr: string): boolean => {
+  if (dayStr.startsWith('Sáb') || dayStr.startsWith('Dom')) return true;
+  const d = parseDateAny(dayStr);
+  if (!d) return false;
+  const wd = d.getDay();
+  return wd === 0 || wd === 6;
+};
+
+const isDateToday = (dayStr: string): boolean => {
+  const d = parseDateAny(dayStr);
+  if (!d) return false;
+  const today = new Date();
+  return d.getDate() === today.getDate() &&
+         d.getMonth() === today.getMonth() &&
+         d.getFullYear() === today.getFullYear();
+};
+
+const formatDisplayDate = (val: string): string => {
+  if (!val) return '';
+  if (val === 'Indefinido') return 'Indefinido';
+  const d = parseDateAny(val);
+  if (!d) return val;
+  return formatDateDDMMAAAA(d);
+};
 
 const getSpecialtyDisplayName = (spec: string) => {
   if (spec === 'Auxiliar do Copeiro de Dia') return 'Aux. Copeiro de Dia';
   return spec;
 };
 
-const createEmptyRoster = (): WeekRoster => {
+// Check if overlapping post assignment is permitted on the same day
+// Ceia de Dia can be assigned to either the Copeiro or the Auxiliar already rostered on that day
+const isAllowedOverlap = (p1: string, p2: string) => {
+  return (p1 === 'Ceia de Dia' && (p2 === 'Copeiro de Dia' || p2 === 'Auxiliar do Copeiro de Dia')) ||
+         (p2 === 'Ceia de Dia' && (p1 === 'Copeiro de Dia' || p1 === 'Auxiliar do Copeiro de Dia'));
+};
+
+const generateUniqueRecordId = (prefix: string) => {
+  return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
+};
+
+const createEmptyRosterForDates = (dateList: string[]): WeekRoster => {
   const r: WeekRoster = {};
-  ALL_DAYS.forEach(day => {
+  dateList.forEach(day => {
     r[day] = {
       'Cozinheiro de Dia': null,
       'Copeiro de Dia': null,
       'Auxiliar do Copeiro de Dia': null,
-      'Ceia de Dia': null,
-      'Auxiliar do Escritório': null
+      'Ceia de Dia': null
     };
   });
   return r;
 };
 
-const initialRoster: WeekRoster = createEmptyRoster();
+const createEmptyRoster = (keys?: string[]): WeekRoster => {
+  if (keys && keys.length > 0) {
+    return createEmptyRosterForDates(keys);
+  }
+  return createInitialRoster();
+};
+
+const createInitialRoster = (): WeekRoster => {
+  const today = new Date();
+  const monthDays = getDaysInMonth(today.getFullYear(), today.getMonth());
+  const currentWeekDays = getWeekDates(getMondayOfWeek(today));
+  const allDays = Array.from(new Set([...currentWeekDays, ...monthDays]));
+  return createEmptyRosterForDates(allDays);
+};
+
+const initialRoster: WeekRoster = createInitialRoster();
 
 const initialLogs: LogEntry[] = [
   { time: '14:47', text: 'Efetivo inicializado em branco. Pronto para cadastros.' }
@@ -326,28 +471,22 @@ const compareMilitaryHierarchy = (a: Military, b: Military) => {
   return a.name.localeCompare(b.name);
 };
 
-const getDayNumberFromDayString = (dayStr: string): number => {
-  const parts = dayStr.split(' ');
-  if (parts.length < 2) return 1;
-  const num = parseInt(parts[1], 10);
-  return isNaN(num) ? 1 : num;
-};
-
-const getDayNumberFromISO = (isoStr: string): number => {
-  const parts = isoStr.split('-');
-  if (parts.length < 3) return 1;
-  const num = parseInt(parts[2], 10);
-  return isNaN(num) ? 1 : num;
-};
-
 const isDayInAbsence = (dayStr: string, absence: Absence): boolean => {
-  const dayNum = getDayNumberFromDayString(dayStr);
-  const startDay = getDayNumberFromISO(absence.startDate);
-  if (absence.indefinite) {
-    return dayNum >= startDay;
+  const targetDate = parseDateAny(dayStr);
+  const startDate = parseDateAny(absence.startDate);
+  if (!targetDate || !startDate) return false;
+
+  targetDate.setHours(0, 0, 0, 0);
+  startDate.setHours(0, 0, 0, 0);
+
+  if (absence.indefinite || !absence.endDate || absence.endDate === 'Indefinido') {
+    return targetDate >= startDate;
   }
-  const endDay = getDayNumberFromISO(absence.endDate);
-  return dayNum >= startDay && dayNum <= endDay;
+  const endDate = parseDateAny(absence.endDate);
+  if (!endDate) return targetDate >= startDate;
+  endDate.setHours(0, 0, 0, 0);
+
+  return targetDate >= startDate && targetDate <= endDate;
 };
 
 export default function RosterApp() {
@@ -359,6 +498,7 @@ export default function RosterApp() {
   const [roster, setRoster] = useState<WeekRoster>(initialRoster);
   const [changelogs, setChangelogs] = useState<LogEntry[]>(initialLogs);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'preta' | 'vermelha' | 'afastamentos' | 'pdf' | 'efetivo'>('dashboard');
+  const [gestaoSubTab, setGestaoSubTab] = useState<'quadro' | 'preta' | 'vermelha'>('quadro');
   
   // Sidebar state for mobile
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -380,13 +520,39 @@ export default function RosterApp() {
   const [selectedAssignType, setSelectedAssignType] = useState<'EP' | 'EV' | 'PERM' | 'DISP'>('EP');
   const [modalFilterOnlySpecialty, setModalFilterOnlySpecialty] = useState(true);
 
-  // Filters State
+  // Filters State & Current Week Navigation
+  const [selectedWeekMonday, setSelectedWeekMonday] = useState<Date>(() => getMondayOfWeek(new Date()));
   const [filterFunction, setFilterFunction] = useState('Todas as Funções');
   const [viewOption, setViewOption] = useState<'Semanal' | 'Quinzenal' | 'Mensal' | 'Personalizado'>('Semanal');
-  const [startDateFilter, setStartDateFilter] = useState('2026-07-01');
-  const [endDateFilter, setEndDateFilter] = useState('2026-07-31');
+  const [startDateFilter, setStartDateFilter] = useState(() => formatDateISO(getMondayOfWeek(new Date())));
+  const [endDateFilter, setEndDateFilter] = useState(() => {
+    const end = new Date(getMondayOfWeek(new Date()));
+    end.setDate(end.getDate() + 6);
+    return formatDateISO(end);
+  });
   const [filterMilitaryName, setFilterMilitaryName] = useState('');
   const [filterScaleType, setFilterScaleType] = useState<'Ambas' | 'Preta' | 'Vermelha'>('Ambas');
+
+  // Navigation handlers for week
+  const handlePrevWeek = () => {
+    setSelectedWeekMonday(prev => {
+      const next = new Date(prev);
+      next.setDate(prev.getDate() - 7);
+      return next;
+    });
+  };
+
+  const handleNextWeek = () => {
+    setSelectedWeekMonday(prev => {
+      const next = new Date(prev);
+      next.setDate(prev.getDate() + 7);
+      return next;
+    });
+  };
+
+  const handleCurrentWeek = () => {
+    setSelectedWeekMonday(getMondayOfWeek(new Date()));
+  };
 
   // Interactive assignment states
   const [selectedCell, setSelectedCell] = useState<{ day: string; post: string } | null>(null);
@@ -416,6 +582,100 @@ export default function RosterApp() {
   // Notification Toast state
   const [toast, setToast] = useState<{ show: boolean; msg: string; type: 'success' | 'info' }>({ show: false, msg: '', type: 'success' });
 
+  // Firebase Cloud & Authentication States
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [cloudSyncStatus, setCloudSyncStatus] = useState<'idle' | 'connected' | 'syncing' | 'synced' | 'error'>('connected');
+  const [lastSyncedAt, setLastSyncedAt] = useState<string>('');
+  const [isFirebaseLoading, setIsFirebaseLoading] = useState(false);
+
+  // Listen to Firebase Auth state
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, user => {
+      setCurrentUser(user);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Hydrate from Firestore / Cloud synchronization on startup
+  useEffect(() => {
+    let isMounted = true;
+
+    async function initFirebaseSync() {
+      try {
+        setCloudSyncStatus('syncing');
+        const isOk = await testConnection();
+        if (!isOk) {
+          if (isMounted) setCloudSyncStatus('connected');
+          return;
+        }
+
+        const [cloudMils, cloudAbs, cloudRos, cloudLogs, cloudSettings] = await Promise.all([
+          fetchMilitariesFromFirestore(),
+          fetchAbsencesFromFirestore(),
+          fetchRosterFromFirestore(),
+          fetchLogsFromFirestore(),
+          fetchSettingsFromFirestore()
+        ]);
+
+        if (!isMounted) return;
+
+        if (cloudMils && cloudMils.length > 0) {
+          setMilitaryList(cloudMils);
+          localStorage.setItem('dr_military', JSON.stringify(cloudMils));
+        } else {
+          // Cloud collection is fresh: seed initial military
+          await syncMilitariesToFirestore(initialMilitary);
+        }
+
+        if (cloudAbs && cloudAbs.length > 0) {
+          const mappedAbs: Absence[] = cloudAbs.map(a => ({
+            id: a.id,
+            militaryId: a.militaryId,
+            militaryName: a.militaryName,
+            rank: a.rank,
+            type: a.type,
+            startDate: a.startDate,
+            endDate: a.endDate,
+            indefinite: !!a.indefinite,
+            notes: a.notes || a.reason || '',
+            autoUpdate: !!a.autoUpdate,
+            status: a.status === 'AGENDADO' ? 'AGENDADO' : 'ATIVO'
+          }));
+          setAbsences(mappedAbs);
+          localStorage.setItem('dr_absences', JSON.stringify(mappedAbs));
+        }
+
+        if (cloudRos && Object.keys(cloudRos).length > 0) {
+          setRoster(cloudRos as WeekRoster);
+          localStorage.setItem('dr_roster', JSON.stringify(cloudRos));
+        } else {
+          // Seed cloud with initial roster
+          const fresh = createInitialRoster();
+          await syncRosterToFirestore(fresh);
+        }
+
+        if (cloudLogs && cloudLogs.length > 0) {
+          setChangelogs(cloudLogs);
+          localStorage.setItem('dr_logs', JSON.stringify(cloudLogs));
+        }
+
+        if (cloudSettings) {
+          if (cloudSettings.minEfetivoPreta) setMinEfetivoPreta(cloudSettings.minEfetivoPreta);
+          if (cloudSettings.minEfetivoVermelha) setMinEfetivoVermelha(cloudSettings.minEfetivoVermelha);
+        }
+
+        setCloudSyncStatus('synced');
+        setLastSyncedAt(new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }));
+      } catch (err) {
+        console.error('Initial cloud sync error:', err);
+        if (isMounted) setCloudSyncStatus('error');
+      }
+    }
+
+    initFirebaseSync();
+    return () => { isMounted = false; };
+  }, []);
+
   // Load state from localStorage if it exists
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -437,9 +697,40 @@ export default function RosterApp() {
       const savedMinVerm = localStorage.getItem('dr_min_verm');
 
       setTimeout(() => {
-        if (savedMilitary) setMilitaryList(JSON.parse(savedMilitary));
+        if (savedMilitary) {
+          try {
+            const parsedMils = JSON.parse(savedMilitary);
+            parsedMils.forEach((m: Military) => {
+              if (m.specialty === 'Auxiliar do Escritório') m.specialty = 'Auxiliar do Copeiro de Dia';
+              if (m.specialtySecondary === 'Auxiliar do Escritório') m.specialtySecondary = undefined;
+            });
+            setMilitaryList(parsedMils);
+          } catch {
+            setMilitaryList(initialMilitary);
+          }
+        }
         if (savedAbsences) setAbsences(JSON.parse(savedAbsences));
-        if (savedRoster) setRoster(JSON.parse(savedRoster));
+        if (savedRoster) {
+          try {
+            const parsed = JSON.parse(savedRoster);
+            const keys = Object.keys(parsed);
+            const hasDDMMAAAA = keys.some(k => /^\d{2}\/\d{2}\/\d{4}$/.test(k));
+            if (hasDDMMAAAA) {
+              Object.keys(parsed).forEach(d => {
+                if (parsed[d] && 'Auxiliar do Escritório' in parsed[d]) {
+                  delete parsed[d]['Auxiliar do Escritório'];
+                }
+              });
+              setRoster(parsed);
+            } else {
+              const fresh = createInitialRoster();
+              setRoster(fresh);
+              localStorage.setItem('dr_roster', JSON.stringify(fresh));
+            }
+          } catch {
+            setRoster(createInitialRoster());
+          }
+        }
         if (savedLogs) setChangelogs(JSON.parse(savedLogs));
         if (savedMinPreta) setMinEfetivoPreta(Number(savedMinPreta));
         if (savedMinVerm) setMinEfetivoVermelha(Number(savedMinVerm));
@@ -447,17 +738,81 @@ export default function RosterApp() {
     }
   }, []);
 
-  // Save state helper
+  // Save state helper with automatic Firebase Firestore synchronization
   const saveState = (
     newMil: Military[],
     newAbs: Absence[],
     newRos: WeekRoster,
     newLogs: LogEntry[]
   ) => {
+    // 1. Instant local persistence for rapid response
     localStorage.setItem('dr_military', JSON.stringify(newMil));
     localStorage.setItem('dr_absences', JSON.stringify(newAbs));
     localStorage.setItem('dr_roster', JSON.stringify(newRos));
     localStorage.setItem('dr_logs', JSON.stringify(newLogs));
+
+    // 2. Asynchronous background sync to Firebase Firestore
+    setCloudSyncStatus('syncing');
+    Promise.all([
+      syncMilitariesToFirestore(newMil),
+      syncAbsencesToFirestore(newAbs),
+      syncRosterToFirestore(newRos),
+      syncLogsToFirestore(newLogs),
+      syncSettingsToFirestore(minEfetivoPreta, minEfetivoVermelha)
+    ]).then(() => {
+      setCloudSyncStatus('synced');
+      setLastSyncedAt(new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }));
+    }).catch(err => {
+      console.error('Firebase autosave error:', err);
+      setCloudSyncStatus('error');
+    });
+  };
+
+  // Manual Firebase Cloud Synchronization
+  const handleManualCloudSync = async () => {
+    setIsFirebaseLoading(true);
+    setCloudSyncStatus('syncing');
+    try {
+      await Promise.all([
+        syncMilitariesToFirestore(militaryList),
+        syncAbsencesToFirestore(absences),
+        syncRosterToFirestore(roster),
+        syncLogsToFirestore(changelogs),
+        syncSettingsToFirestore(minEfetivoPreta, minEfetivoVermelha)
+      ]);
+      setCloudSyncStatus('synced');
+      setLastSyncedAt(new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }));
+      showToast('Dados sincronizados com o Firebase Firestore!', 'success');
+    } catch (err) {
+      console.error('Manual sync error:', err);
+      setCloudSyncStatus('error');
+      showToast('Erro ao sincronizar com o Firebase.', 'info');
+    } finally {
+      setIsFirebaseLoading(false);
+    }
+  };
+
+  // Google Login Handler
+  const handleGoogleLogin = async () => {
+    try {
+      const user = await loginWithGoogle();
+      if (user) {
+        showToast(`Conectado ao Firebase como ${user.displayName || user.email}!`, 'success');
+      }
+    } catch (err) {
+      console.error('Login error:', err);
+      showToast('Falha na autenticação Google.', 'info');
+    }
+  };
+
+  // Logout Handler
+  const handleLogout = async () => {
+    try {
+      await logoutUser();
+      showToast('Sessão desconectada do Firebase.', 'info');
+    } catch (err) {
+      console.error('Logout error:', err);
+    }
   };
 
   const showToast = (msg: string, type: 'success' | 'info' = 'success') => {
@@ -488,14 +843,27 @@ export default function RosterApp() {
     const updatedMilList = militaryList.map(m => ({ ...m }));
     let logsList = [...changelogs];
 
-    const days = Object.keys(updatedRoster);
+    // Work on daysToShow if available, otherwise on all keys
+    const targetDays = daysToShow.length > 0 ? daysToShow : Object.keys(updatedRoster);
     let assignedCount = 0;
+
+    // Ensure slot structure exists for all target days
+    targetDays.forEach(day => {
+      if (!updatedRoster[day]) {
+        updatedRoster[day] = {
+          'Cozinheiro de Dia': null,
+          'Copeiro de Dia': null,
+          'Auxiliar do Copeiro de Dia': null,
+          'Ceia de Dia': null
+        };
+      }
+    });
 
     // Track when each military last served (day index) to respect rest (folga)
     const lastDayServed: Record<string, number> = {};
 
-    // Scan existing assignments
-    days.forEach((day, dayIdx) => {
+    // Scan existing assignments across entire roster
+    Object.keys(updatedRoster).forEach((day, dayIdx) => {
       Object.values(updatedRoster[day]).forEach(cell => {
         if (cell && cell.militaryId && cell.type !== 'DISP') {
           lastDayServed[cell.militaryId] = dayIdx;
@@ -503,79 +871,114 @@ export default function RosterApp() {
       });
     });
 
-    days.forEach((day, dayIdx) => {
-      const isWeekend = day.startsWith('Sáb') || day.startsWith('Dom');
-      const posts = Object.keys(updatedRoster[day]);
+    targetDays.forEach((day, dayIdx) => {
+      const isWeekend = isDayWeekend(day);
+      // Ensure Cozinheiro, Copeiro, Aux. Copeiro are assigned first so Ceia de Dia can choose from Copeiro/Auxiliar of the day
+      const posts = ['Cozinheiro de Dia', 'Copeiro de Dia', 'Auxiliar do Copeiro de Dia', 'Ceia de Dia'];
 
       posts.forEach(post => {
         // If cell is already filled, skip
         if (updatedRoster[day][post] !== null) return;
 
-        // Find eligible militaries
-        const eligible = updatedMilList.filter(mil => {
-          // Check if military has an active absence on this specific day
-          const hasAbsenceToday = absences.some(abs => 
-            abs.militaryId === mil.id && 
-            abs.status === 'ATIVO' && 
-            isDayInAbsence(day, abs)
-          );
-          if (hasAbsenceToday) return false;
+        let eligible: Military[] = [];
 
-          // Status check
-          if (mil.status === 'Afastado') {
-            const hasAnyAbsence = absences.some(abs => abs.militaryId === mil.id);
-            if (!hasAnyAbsence) return false;
+        // Special rule for 'Ceia de Dia':
+        // Pode ser escolhido tanto o copeiro ou o auxiliar já escalado para aquele dia
+        if (post === 'Ceia de Dia') {
+          const copeiroMilId = updatedRoster[day]['Copeiro de Dia']?.militaryId;
+          const auxMilId = updatedRoster[day]['Auxiliar do Copeiro de Dia']?.militaryId;
+
+          const dayStaffCandidates = updatedMilList.filter(mil => {
+            if (mil.id !== copeiroMilId && mil.id !== auxMilId) return false;
+            if (mil.status === 'Afastado') return false;
+            const hasAbsenceToday = absences.some(abs => 
+              abs.militaryId === mil.id && 
+              abs.status === 'ATIVO' && 
+              isDayInAbsence(day, abs)
+            );
+            return !hasAbsenceToday;
+          });
+
+          if (dayStaffCandidates.length > 0) {
+            // Sort by duty equity and hierarchy
+            dayStaffCandidates.sort((a, b) => {
+              if (a.dutyCount !== b.dutyCount) return a.dutyCount - b.dutyCount;
+              return compareMilitaryHierarchy(a, b);
+            });
+            eligible = dayStaffCandidates;
           }
+        }
 
-          // Type matching
-          if (isWeekend) {
-            if (mil.type !== 'EV' && mil.type !== 'Ambas') return false;
-          } else {
-            if (mil.type !== 'EP' && mil.type !== 'Ambas') return false;
-          }
+        // Standard selection if not Ceia de Dia or if no day-assigned staff was available
+        if (eligible.length === 0) {
+          eligible = updatedMilList.filter(mil => {
+            // Check if military has an active absence on this specific day
+            const hasAbsenceToday = absences.some(abs => 
+              abs.militaryId === mil.id && 
+              abs.status === 'ATIVO' && 
+              isDayInAbsence(day, abs)
+            );
+            if (hasAbsenceToday) return false;
 
-          // Matching primary or secondary specialty
-          const hasMatchingSpecialty = mil.specialty === post || mil.specialtySecondary === post;
-          if (!hasMatchingSpecialty) return false;
+            // Status check
+            if (mil.status === 'Afastado') {
+              const hasAnyAbsence = absences.some(abs => abs.militaryId === mil.id);
+              if (!hasAnyAbsence) return false;
+            }
 
-          // Check if military was already assigned on this day
-          const assignedOnDay = Object.values(updatedRoster[day]).some(
-            cell => cell && cell.militaryId === mil.id
-          );
-          if (assignedOnDay) return false;
+            // Type matching
+            if (isWeekend) {
+              if (mil.type !== 'EV' && mil.type !== 'Ambas') return false;
+            } else {
+              if (mil.type !== 'EP' && mil.type !== 'Ambas') return false;
+            }
 
-          return true;
-        });
+            // Matching primary or secondary specialty
+            const hasMatchingSpecialty = mil.specialty === post || mil.specialtySecondary === post ||
+              (post === 'Ceia de Dia' && (mil.specialty === 'Copeiro de Dia' || mil.specialty === 'Auxiliar do Copeiro de Dia' || mil.specialtySecondary === 'Copeiro de Dia' || mil.specialtySecondary === 'Auxiliar do Copeiro de Dia'));
+            if (!hasMatchingSpecialty) return false;
+
+            // Check if military was already assigned on this day (unless allowed overlap with Ceia)
+            const assignedOnDay = Object.keys(updatedRoster[day]).some(
+              otherPost => otherPost !== post &&
+                           updatedRoster[day][otherPost]?.militaryId === mil.id &&
+                           !isAllowedOverlap(post, otherPost)
+            );
+            if (assignedOnDay) return false;
+
+            return true;
+          });
+
+          // Sort candidates by rest interval, dutyCount equity, and hierarchy
+          eligible.sort((a, b) => {
+            const lastA = lastDayServed[a.id] !== undefined ? lastDayServed[a.id] : -999;
+            const lastB = lastDayServed[b.id] !== undefined ? lastDayServed[b.id] : -999;
+            
+            const servedYesterdayA = (dayIdx - lastA) === 1 ? 1 : 0;
+            const servedYesterdayB = (dayIdx - lastB) === 1 ? 1 : 0;
+
+            // Strongly avoid consecutive duty shifts
+            if (servedYesterdayA !== servedYesterdayB) {
+              return servedYesterdayA - servedYesterdayB;
+            }
+
+            // Equity by accumulated duties
+            if (a.dutyCount !== b.dutyCount) {
+              return a.dutyCount - b.dutyCount;
+            }
+
+            // Prefer longer rest interval
+            const restA = dayIdx - lastA;
+            const restB = dayIdx - lastB;
+            if (restA !== restB) {
+              return restB - restA;
+            }
+
+            return compareMilitaryHierarchy(a, b);
+          });
+        }
 
         if (eligible.length === 0) return;
-
-        // Sort candidates by rest interval, dutyCount equity, and hierarchy
-        eligible.sort((a, b) => {
-          const lastA = lastDayServed[a.id] !== undefined ? lastDayServed[a.id] : -999;
-          const lastB = lastDayServed[b.id] !== undefined ? lastDayServed[b.id] : -999;
-          
-          const servedYesterdayA = (dayIdx - lastA) === 1 ? 1 : 0;
-          const servedYesterdayB = (dayIdx - lastB) === 1 ? 1 : 0;
-
-          // Strongly avoid consecutive duty shifts
-          if (servedYesterdayA !== servedYesterdayB) {
-            return servedYesterdayA - servedYesterdayB;
-          }
-
-          // Equity by accumulated duties
-          if (a.dutyCount !== b.dutyCount) {
-            return a.dutyCount - b.dutyCount;
-          }
-
-          // Prefer longer rest interval
-          const restA = dayIdx - lastA;
-          const restB = dayIdx - lastB;
-          if (restA !== restB) {
-            return restB - restA;
-          }
-
-          return compareMilitaryHierarchy(a, b);
-        });
 
         const chosen = eligible[0];
 
@@ -616,12 +1019,22 @@ export default function RosterApp() {
     const { day, post } = selectedCell;
 
     const updatedRoster: WeekRoster = JSON.parse(JSON.stringify(roster));
+    if (!updatedRoster[day]) {
+      updatedRoster[day] = {
+        'Cozinheiro de Dia': null,
+        'Copeiro de Dia': null,
+        'Auxiliar do Copeiro de Dia': null,
+        'Ceia de Dia': null
+      };
+    }
     const updatedMilList = militaryList.map(m => ({ ...m }));
     let logsList = [...changelogs];
 
     if (milId !== 'empty') {
       const isAlreadyAssignedElsewhere = Object.keys(updatedRoster[day]).some(
-        otherPost => otherPost !== post && updatedRoster[day][otherPost]?.militaryId === milId
+        otherPost => otherPost !== post &&
+                     updatedRoster[day][otherPost]?.militaryId === milId &&
+                     !isAllowedOverlap(post, otherPost)
       );
       if (isAlreadyAssignedElsewhere) {
         showToast('Militar já está escalado em outra função hoje!', 'info');
@@ -645,7 +1058,7 @@ export default function RosterApp() {
     } else {
       const mil = updatedMilList.find(m => m.id === milId);
       if (mil) {
-        const isWeekend = day.startsWith('Sáb') || day.startsWith('Dom');
+        const isWeekend = isDayWeekend(day);
         const finalType = selectedAssignType === 'PERM' || selectedAssignType === 'DISP'
           ? selectedAssignType
           : (isWeekend ? 'EV' : 'EP');
@@ -679,7 +1092,7 @@ export default function RosterApp() {
   };
 
   const handleClearRoster = () => {
-    const emptyRoster = createEmptyRoster();
+    const emptyRoster = createEmptyRoster(Object.keys(roster));
     const resetMilList = militaryList.map(mil => ({ ...mil, dutyCount: 0 }));
     const resetLogs = addLog('Escala e contagem de serviços foram zeradas completamente pelo usuário.', []);
     setRoster(emptyRoster);
@@ -697,7 +1110,7 @@ export default function RosterApp() {
     }
 
     const newMil: Military = {
-      id: `mil-${Date.now()}`,
+      id: generateUniqueRecordId('mil'),
       rank: newMilRank,
       name: newMilName,
       fullName: newMilFullName,
@@ -788,7 +1201,9 @@ export default function RosterApp() {
       
       setMilitaryList(initialMilitary);
       setAbsences(initialAbsences);
-      setRoster(initialRoster);
+      const freshRoster = createInitialRoster();
+      setRoster(freshRoster);
+      setSelectedWeekMonday(getMondayOfWeek(new Date()));
       setChangelogs(initialLogs);
       setMinEfetivoPreta(12);
       setMinEfetivoVermelha(14);
@@ -809,11 +1224,12 @@ export default function RosterApp() {
     const mil = militaryList.find(m => m.id === absentMilId);
     if (!mil) return;
 
-    const sDate = absenceStart || '2026-07-01';
-    const eDate = absenceIndefinite ? 'Indefinido' : (absenceEnd || '2026-07-31');
+    const todayIso = formatDateISO(new Date());
+    const sDate = absenceStart || todayIso;
+    const eDate = absenceIndefinite ? 'Indefinido' : (absenceEnd || todayIso);
 
     const newAbsence: Absence = {
-      id: `afast-${Date.now()}`,
+      id: generateUniqueRecordId('afast'),
       militaryId: mil.id,
       militaryName: mil.name,
       rank: mil.rank,
@@ -948,7 +1364,7 @@ export default function RosterApp() {
         doc.setFont('helvetica', 'bold');
         let title = '';
         if (selectedReportType === 'weekly') {
-          title = 'ESCALA DE SERVIÇO SEMANAL - JULHO';
+          title = `ESCALA DE SERVIÇO SEMANAL (${formatDateDDMMAAAA(new Date())})`;
         } else if (selectedReportType === 'individual') {
           title = 'EXTRATO DE ESCALA INDIVIDUAL';
         } else if (selectedReportType === 'monthly') {
@@ -971,7 +1387,7 @@ export default function RosterApp() {
               y = 20;
             }
             doc.setFont('helvetica', 'bold');
-            doc.text(`Dia: ${day}`, 15, y);
+            doc.text(`Data: ${day} (${getDayWeekdayLong(day)})`, 15, y);
             y += 6;
             doc.setFont('helvetica', 'normal');
             Object.keys(roster[day]).forEach(post => {
@@ -1025,7 +1441,7 @@ export default function RosterApp() {
           doc.setFont('helvetica', 'bold');
           doc.text('Estatísticas por Função:', 15, y); y += 6;
           doc.setFont('helvetica', 'normal');
-          ['Cozinheiro de Dia', 'Copeiro de Dia', 'Auxiliar do Copeiro de Dia', 'Ceia de Dia', 'Auxiliar do Escritório'].forEach(spec => {
+          ['Cozinheiro de Dia', 'Copeiro de Dia', 'Auxiliar do Copeiro de Dia', 'Ceia de Dia'].forEach(spec => {
             const count = Object.values(roster).flatMap(d => Object.entries(d)).filter(([p, cell]) => p === spec && cell !== null && cell.type !== 'DISP').length;
             const totalDays = Object.keys(roster).length;
             const pct = totalDays > 0 ? Math.round((count / totalDays) * 100) : 0;
@@ -1089,7 +1505,7 @@ export default function RosterApp() {
           });
         } else if (selectedReportType === 'monthly') {
           csvContent += 'Especialidade;Serviços Atendidos;Aproveitamento\n';
-          ['Cozinheiro de Dia', 'Copeiro de Dia', 'Auxiliar do Copeiro de Dia', 'Ceia de Dia', 'Auxiliar do Escritório'].forEach(spec => {
+          ['Cozinheiro de Dia', 'Copeiro de Dia', 'Auxiliar do Copeiro de Dia', 'Ceia de Dia'].forEach(spec => {
             const count = Object.values(roster).flatMap(d => Object.entries(d)).filter(([p, cell]) => p === spec && cell !== null && cell.type !== 'DISP').length;
             const totalDays = Object.keys(roster).length;
             const pct = totalDays > 0 ? Math.round((count / totalDays) * 100) : 0;
@@ -1141,19 +1557,38 @@ export default function RosterApp() {
     .filter(cell => cell !== null).length;
   const complianceRate = totalPossibleSlots > 0 ? Math.round((filledSlots / totalPossibleSlots) * 100) : 100;
 
-  // Filter roster for display on Dashboard
-  const daysToShow = Object.keys(roster).filter((day, index) => {
-    // Apply visual option filter (Semanal = first 7 days, Quinzenal = first 15 days, Mensal = all days, Personalizado = custom range)
-    if (viewOption === 'Semanal' && index >= 7) return false;
-    if (viewOption === 'Quinzenal' && index >= 15) return false;
-    if (viewOption === 'Personalizado') {
-      const dayNum = getDayNumberFromDayString(day);
-      const startDay = getDayNumberFromISO(startDateFilter);
-      const endDay = getDayNumberFromISO(endDateFilter);
-      if (dayNum < startDay || dayNum > endDay) return false;
-    }
+  const currentWeekDates = getWeekDates(selectedWeekMonday);
 
-    const isWeekend = day.startsWith('Sáb') || day.startsWith('Dom');
+  // Filter roster for display on Dashboard based on current week and view options
+  let baseDays: string[] = [];
+  if (viewOption === 'Semanal') {
+    baseDays = currentWeekDates;
+  } else if (viewOption === 'Quinzenal') {
+    const nextMonday = new Date(selectedWeekMonday);
+    nextMonday.setDate(selectedWeekMonday.getDate() + 7);
+    baseDays = [...currentWeekDates, ...getWeekDates(nextMonday)];
+  } else if (viewOption === 'Mensal') {
+    const refDate = new Date(selectedWeekMonday);
+    baseDays = getDaysInMonth(refDate.getFullYear(), refDate.getMonth());
+  } else if (viewOption === 'Personalizado') {
+    const s = parseDateAny(startDateFilter);
+    const e = parseDateAny(endDateFilter);
+    if (s && e) {
+      const list: string[] = [];
+      const cur = new Date(Math.min(s.getTime(), e.getTime()));
+      const max = new Date(Math.max(s.getTime(), e.getTime()));
+      while (cur <= max && list.length < 60) {
+        list.push(formatDateDDMMAAAA(cur));
+        cur.setDate(cur.getDate() + 1);
+      }
+      baseDays = list;
+    } else {
+      baseDays = currentWeekDates;
+    }
+  }
+
+  const daysToShow = baseDays.filter(day => {
+    const isWeekend = isDayWeekend(day);
     if (filterScaleType === 'Preta' && isWeekend) return false;
     if (filterScaleType === 'Vermelha' && !isWeekend) return false;
     return true;
@@ -1197,13 +1632,56 @@ export default function RosterApp() {
 
         {/* Logged User Info */}
         <div className="px-4 py-6 border-b border-slate-900">
-          <div className="flex items-center gap-3 p-3 bg-slate-900/60 rounded-xl border border-slate-800/40">
-            <div className="w-10 h-10 rounded-full overflow-hidden bg-slate-800 flex items-center justify-center text-white border border-slate-700 font-bold">
-              SM
+          <div className="p-3 bg-slate-900/60 rounded-xl border border-slate-800/40 space-y-2">
+            <div className="flex items-center gap-3">
+              {currentUser?.photoURL ? (
+                <Image 
+                  src={currentUser.photoURL} 
+                  alt="Avatar" 
+                  width={40}
+                  height={40}
+                  unoptimized
+                  className="w-10 h-10 rounded-full border border-slate-700 object-cover"
+                  referrerPolicy="no-referrer"
+                />
+              ) : (
+                <div className="w-10 h-10 rounded-full overflow-hidden bg-blue-900/40 flex items-center justify-center text-blue-300 border border-blue-700/50 font-bold text-xs">
+                  {currentUser?.displayName ? currentUser.displayName.slice(0, 2).toUpperCase() : 'SM'}
+                </div>
+              )}
+              <div className="min-w-0 flex-1">
+                <p className="font-semibold text-sm text-white truncate">
+                  {currentUser?.displayName || 'Sgt. Marco'}
+                </p>
+                <p className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider truncate">
+                  {currentUser?.email || 'aprov1hgesm@gmail.com'}
+                </p>
+              </div>
             </div>
-            <div>
-              <p className="font-semibold text-sm text-white">Sgt. Marco</p>
-              <p className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider">Gestor de Escalas</p>
+
+            <div className="pt-1 flex items-center justify-between border-t border-slate-800/60 text-[10px]">
+              <span className="flex items-center gap-1.5 text-slate-400">
+                <span className={cn(
+                  "w-1.5 h-1.5 rounded-full",
+                  cloudSyncStatus === 'synced' ? "bg-emerald-400" : cloudSyncStatus === 'syncing' ? "bg-amber-400 animate-ping" : "bg-blue-400"
+                )} />
+                {cloudSyncStatus === 'syncing' ? 'Sincronizando...' : 'Firebase Conectado'}
+              </span>
+              {currentUser ? (
+                <button 
+                  onClick={handleLogout}
+                  className="text-slate-400 hover:text-rose-400 font-medium transition-colors"
+                >
+                  Sair
+                </button>
+              ) : (
+                <button 
+                  onClick={handleGoogleLogin}
+                  className="text-blue-400 hover:text-blue-300 font-bold transition-colors"
+                >
+                  Login Google
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -1218,7 +1696,7 @@ export default function RosterApp() {
             )}
           >
             <Calendar className="w-4 h-4" />
-            <span>Painel Geral</span>
+            <span>Gestão de Escalas</span>
           </button>
 
           <button 
@@ -1230,28 +1708,6 @@ export default function RosterApp() {
           >
             <UserCheck className="w-4 h-4" />
             <span>Gerenciar Efetivo</span>
-          </button>
-
-          <button 
-            onClick={() => { setActiveTab('preta'); setSidebarOpen(false); }}
-            className={cn(
-              "w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-all text-left",
-              activeTab === 'preta' ? "bg-blue-600/10 text-blue-400 border-l-4 border-blue-500 font-semibold bg-slate-900" : "text-slate-400 hover:bg-slate-900/40 hover:text-slate-200"
-            )}
-          >
-            <Users className="w-4 h-4" />
-            <span>Escala Preta</span>
-          </button>
-
-          <button 
-            onClick={() => { setActiveTab('vermelha'); setSidebarOpen(false); }}
-            className={cn(
-              "w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-all text-left",
-              activeTab === 'vermelha' ? "bg-blue-600/10 text-blue-400 border-l-4 border-blue-500 font-semibold bg-slate-900" : "text-slate-400 hover:bg-slate-900/40 hover:text-slate-200"
-            )}
-          >
-            <Users className="w-4 h-4" />
-            <span>Escala Vermelha</span>
           </button>
 
           <button 
@@ -1325,16 +1781,14 @@ export default function RosterApp() {
             
             {/* Context Header Title */}
             <h2 className="font-bold text-slate-800 text-lg hidden sm:block">
-              {activeTab === 'dashboard' && 'Quadro Geral de Escalas'}
+              {activeTab === 'dashboard' && (gestaoSubTab === 'quadro' ? 'Gestão de Escalas — Quadro Geral' : gestaoSubTab === 'preta' ? 'Gestão de Escalas — Escala Preta' : 'Gestão de Escalas — Escala Vermelha')}
               {activeTab === 'efetivo' && 'Gerenciamento do Efetivo Militar'}
-              {activeTab === 'preta' && 'Escala Preta (Dias Úteis)'}
-              {activeTab === 'vermelha' && 'Escala Vermelha (Fins de Semana)'}
               {activeTab === 'afastamentos' && 'Gestão de Afastamentos'}
               {activeTab === 'pdf' && 'Geração de Documentos e Relatórios'}
             </h2>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
             {/* Search military bar */}
             <div className="relative max-w-xs hidden md:block">
               <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -1343,9 +1797,77 @@ export default function RosterApp() {
                 placeholder="Pesquisar militar..." 
                 value={filterMilitaryName}
                 onChange={e => setFilterMilitaryName(e.target.value)}
-                className="w-56 pl-9 pr-4 py-1.5 bg-slate-100 rounded-full border-none focus:ring-1 focus:ring-blue-500 text-xs text-slate-700"
+                className="w-52 pl-9 pr-4 py-1.5 bg-slate-100 rounded-full border-none focus:ring-1 focus:ring-blue-500 text-xs text-slate-700"
               />
             </div>
+
+            {/* Cloud Sync Status Pill */}
+            <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-slate-100 hover:bg-slate-200/70 border border-slate-200 rounded-full text-xs transition-colors">
+              <div className="flex items-center gap-1.5">
+                <span className={cn(
+                  "w-2 h-2 rounded-full",
+                  cloudSyncStatus === 'synced' ? "bg-emerald-500" :
+                  cloudSyncStatus === 'syncing' ? "bg-amber-500 animate-pulse" :
+                  cloudSyncStatus === 'error' ? "bg-rose-500" : "bg-blue-500"
+                )} />
+                <span className="font-semibold text-slate-700 text-[11px]">
+                  {cloudSyncStatus === 'syncing' ? 'Sincronizando Nuvem...' :
+                   cloudSyncStatus === 'synced' ? (lastSyncedAt ? `Nuvem Ok (${lastSyncedAt})` : 'Nuvem Firebase Ativa') :
+                   cloudSyncStatus === 'error' ? 'Erro de Sincronia' : 'Firebase Pronto'}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={handleManualCloudSync}
+                disabled={isFirebaseLoading}
+                title="Sincronizar agora com Firebase Firestore"
+                className="text-slate-500 hover:text-blue-600 disabled:opacity-50 transition-colors ml-1 p-0.5"
+              >
+                <RefreshCw className={cn("w-3.5 h-3.5", isFirebaseLoading && "animate-spin text-blue-600")} />
+              </button>
+            </div>
+
+            {/* Google Authentication Trigger */}
+            {currentUser ? (
+              <div className="flex items-center gap-2 pl-1">
+                {currentUser.photoURL ? (
+                  <Image 
+                    src={currentUser.photoURL} 
+                    alt={currentUser.displayName || 'Usuário'} 
+                    width={32}
+                    height={32}
+                    unoptimized
+                    className="w-8 h-8 rounded-full border border-blue-200 object-cover"
+                    title={currentUser.email || ''}
+                    referrerPolicy="no-referrer"
+                  />
+                ) : (
+                  <div 
+                    className="w-8 h-8 rounded-full bg-blue-100 border border-blue-200 flex items-center justify-center text-blue-700 font-bold text-xs"
+                    title={currentUser.email || ''}
+                  >
+                    {currentUser.displayName ? currentUser.displayName.slice(0, 2).toUpperCase() : 'US'}
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  title="Desconectar do Firebase"
+                  className="p-1 text-slate-400 hover:text-rose-600 transition-colors"
+                >
+                  <LogOut className="w-4 h-4" />
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={handleGoogleLogin}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-full text-xs font-semibold transition-all shadow-2xs"
+              >
+                <LogIn className="w-3.5 h-3.5" />
+                <span>Entrar (Google)</span>
+              </button>
+            )}
 
             <button className="p-2 text-slate-400 hover:bg-slate-100 rounded-full relative transition-colors">
               <Bell className="w-5 h-5" />
@@ -1355,49 +1877,136 @@ export default function RosterApp() {
             <button className="p-2 text-slate-400 hover:bg-slate-100 rounded-full transition-colors">
               <Settings className="w-5 h-5" />
             </button>
-
-            <div className="w-8 h-8 rounded-full overflow-hidden border border-slate-200 bg-slate-100 relative">
-              <Image 
-                src="https://picsum.photos/seed/military/100/100" 
-                alt="Portrait" 
-                width={32}
-                height={32}
-                className="w-full h-full object-cover" 
-                referrerPolicy="no-referrer"
-              />
-            </div>
           </div>
         </header>
 
         {/* Scrollable Main Area */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
 
-          {/* TAB 1: DASHBOARD / GENERAL TABLE */}
+          {/* TAB 1: GESTÃO DE ESCALAS */}
           {activeTab === 'dashboard' && (
             <div className="space-y-6">
               
-              {/* Header Title & Date Range */}
-              <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
+              {/* Sub-Tabs: Quadro Geral | Escala Preta | Escala Vermelha */}
+              <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-2 border border-slate-200 rounded-xl shadow-2xs">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    onClick={() => setGestaoSubTab('quadro')}
+                    className={cn(
+                      "flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all",
+                      gestaoSubTab === 'quadro'
+                        ? "bg-slate-900 text-white shadow-xs"
+                        : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                    )}
+                  >
+                    <Calendar className="w-3.5 h-3.5" />
+                    <span>Quadro Geral</span>
+                  </button>
+
+                  <button
+                    onClick={() => setGestaoSubTab('preta')}
+                    className={cn(
+                      "flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all",
+                      gestaoSubTab === 'preta'
+                        ? "bg-slate-900 text-white shadow-xs"
+                        : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                    )}
+                  >
+                    <span className={cn("w-2 h-2 rounded-full", gestaoSubTab === 'preta' ? "bg-blue-400" : "bg-slate-400")} />
+                    <span>Escala Preta (Dias Úteis)</span>
+                  </button>
+
+                  <button
+                    onClick={() => setGestaoSubTab('vermelha')}
+                    className={cn(
+                      "flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all",
+                      gestaoSubTab === 'vermelha'
+                        ? "bg-rose-600 text-white shadow-xs"
+                        : "text-slate-600 hover:text-rose-700 hover:bg-rose-50"
+                    )}
+                  >
+                    <span className={cn("w-2 h-2 rounded-full", gestaoSubTab === 'vermelha' ? "bg-white" : "bg-rose-500")} />
+                    <span>Escala Vermelha (Fins de Semana)</span>
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2 pr-1">
+                  <span className="text-[11px] text-slate-400 font-medium hidden sm:inline">
+                    Setor de Aprovisionamento
+                  </span>
+                </div>
+              </div>
+
+              {/* Sub-view 1: Quadro Geral */}
+              {gestaoSubTab === 'quadro' && (
+                <div className="space-y-6">
+                  {/* Header Title & Date Range */}
+                  <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
                 <div>
                   <h3 className="text-2xl font-bold text-slate-900 tracking-tight">Quadro Geral de Escalas</h3>
-                  <p className="text-slate-500 text-sm">Gestão centralizada e automatizada de efetivo militar — Julho de 2026</p>
+                  <p className="text-slate-500 text-sm">
+                    Gestão centralizada e automatizada de efetivo militar — {
+                      viewOption === 'Semanal' 
+                        ? `Semana de ${formatDateDDMMAAAA(selectedWeekMonday)} a ${formatDateDDMMAAAA(new Date(selectedWeekMonday.getTime() + 6 * 86400000))} ${selectedWeekMonday.getTime() === getMondayOfWeek(new Date()).getTime() ? '(Semana Atual)' : ''}`
+                        : viewOption === 'Quinzenal'
+                        ? `Quinzenal (${daysToShow[0] || ''} a ${daysToShow[daysToShow.length - 1] || ''})`
+                        : viewOption === 'Mensal'
+                        ? `Mês Vigente (${daysToShow[0] || ''} a ${daysToShow[daysToShow.length - 1] || ''})`
+                        : `Período Personalizado (${formatDisplayDate(startDateFilter)} a ${formatDisplayDate(endDateFilter)})`
+                    }
+                  </p>
                 </div>
                 
-                <div className="flex gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* Quick Week Controls */}
+                  <div className="flex items-center bg-white border border-slate-200 rounded-lg p-1 shadow-xs">
+                    <button 
+                      onClick={handlePrevWeek}
+                      className="p-1.5 hover:bg-slate-100 rounded text-slate-600 transition-colors text-xs font-semibold flex items-center gap-1"
+                      title="Semana Anterior"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                      <span className="hidden sm:inline">Anterior</span>
+                    </button>
+                    
+                    <button 
+                      onClick={handleCurrentWeek}
+                      className={cn(
+                        "px-2.5 py-1 rounded text-xs font-bold transition-all flex items-center gap-1.5",
+                        selectedWeekMonday.getTime() === getMondayOfWeek(new Date()).getTime() 
+                          ? "bg-blue-50 text-blue-700 border border-blue-200 shadow-2xs" 
+                          : "text-slate-600 hover:bg-slate-100"
+                      )}
+                      title="Ir para a Semana Atual"
+                    >
+                      <Calendar className="w-3.5 h-3.5 text-blue-600" />
+                      <span>Semana Atual</span>
+                    </button>
+
+                    <button 
+                      onClick={handleNextWeek}
+                      className="p-1.5 hover:bg-slate-100 rounded text-slate-600 transition-colors text-xs font-semibold flex items-center gap-1"
+                      title="Próxima Semana"
+                    >
+                      <span className="hidden sm:inline">Próxima</span>
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+
                   <button 
                     onClick={handleResetDatabase}
-                    className="flex items-center gap-2 px-4 py-2 border border-rose-200 bg-rose-50/50 text-rose-700 rounded-lg font-semibold text-xs hover:bg-rose-100 transition-all shadow-xs"
+                    className="flex items-center gap-2 px-3 py-2 border border-rose-200 bg-rose-50/50 text-rose-700 rounded-lg font-semibold text-xs hover:bg-rose-100 transition-all shadow-xs"
                     title="Redefinir dados para o padrão de fábrica"
                   >
                     <Trash2 className="w-4 h-4 text-rose-500" />
-                    <span>Redefinir</span>
+                    <span className="hidden sm:inline">Redefinir</span>
                   </button>
                   <button 
                     onClick={() => setActiveTab('pdf')}
-                    className="flex items-center gap-2 px-4 py-2 border border-slate-200 bg-white rounded-lg text-slate-700 font-semibold text-xs hover:bg-slate-100 transition-all shadow-xs"
+                    className="flex items-center gap-2 px-3 py-2 border border-slate-200 bg-white rounded-lg text-slate-700 font-semibold text-xs hover:bg-slate-100 transition-all shadow-xs"
                   >
                     <FileText className="w-4 h-4" />
-                    <span>Mudar Visão</span>
+                    <span className="hidden sm:inline">Mudar Visão</span>
                   </button>
                   <button 
                     onClick={handleAutoGenerate}
@@ -1422,9 +2031,8 @@ export default function RosterApp() {
                       <option>Todas as Funções</option>
                       <option value="Cozinheiro de Dia">Cozinheiro de Dia</option>
                       <option value="Copeiro de Dia">Copeiro de Dia</option>
-                      <option value="Auxiliar do Copeiro de Dia">Copeiro de Dia</option>
+                      <option value="Auxiliar do Copeiro de Dia">Auxiliar do Copeiro de Dia</option>
                       <option value="Ceia de Dia">Ceia de Dia</option>
-                      <option value="Auxiliar do Escritório">Auxiliar do Escritório</option>
                     </select>
                   </div>
 
@@ -1435,9 +2043,9 @@ export default function RosterApp() {
                       onChange={e => setViewOption(e.target.value as 'Semanal' | 'Quinzenal' | 'Mensal' | 'Personalizado')}
                       className="border border-slate-200 rounded-lg text-xs py-2 px-3 focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white font-semibold text-slate-700"
                     >
-                      <option value="Semanal">Semanal</option>
-                      <option value="Quinzenal">Quinzenal</option>
-                      <option value="Mensal">Mensal</option>
+                      <option value="Semanal">Semana Atual (7 dias)</option>
+                      <option value="Quinzenal">Quinzenal (14 dias)</option>
+                      <option value="Mensal">Mês Vigente (Mês Completo)</option>
                       <option value="Personalizado">Período Personalizado</option>
                     </select>
                   </div>
@@ -1481,29 +2089,25 @@ export default function RosterApp() {
                 {viewOption === 'Personalizado' && (
                   <div className="p-3 bg-slate-50 border border-slate-100 rounded-lg flex flex-col md:flex-row items-center gap-4 animate-fadeIn">
                     <div className="flex flex-col gap-1 w-full md:w-auto">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Data Inicial (Julho 2026)</span>
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Data Inicial</span>
                       <input 
                         type="date"
-                        min="2026-07-01"
-                        max="2026-07-31"
                         value={startDateFilter}
                         onChange={e => setStartDateFilter(e.target.value)}
                         className="border border-slate-200 rounded-lg text-xs py-2 px-3 focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white"
                       />
                     </div>
                     <div className="flex flex-col gap-1 w-full md:w-auto">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Data Final (Julho 2026)</span>
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Data Final</span>
                       <input 
                         type="date"
-                        min="2026-07-01"
-                        max="2026-07-31"
                         value={endDateFilter}
                         onChange={e => setEndDateFilter(e.target.value)}
                         className="border border-slate-200 rounded-lg text-xs py-2 px-3 focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white"
                       />
                     </div>
-                    <div className="text-xs text-slate-400 mt-4 md:mt-0 font-medium">
-                      Exibindo do dia <strong className="text-slate-700">{getDayNumberFromISO(startDateFilter)}</strong> ao dia <strong className="text-slate-700">{getDayNumberFromISO(endDateFilter)}</strong> de Julho de 2026.
+                    <div className="text-xs text-slate-500 mt-4 md:mt-0 font-medium">
+                      Exibindo de <strong className="text-slate-800 font-bold">{formatDisplayDate(startDateFilter)}</strong> a <strong className="text-slate-800 font-bold">{formatDisplayDate(endDateFilter)}</strong> (formato dd/mm/aaaa).
                     </div>
                   </div>
                 )}
@@ -1547,25 +2151,48 @@ export default function RosterApp() {
                         </th>
                         
                         {/* Day headers */}
-                        {daysToShow.map(day => (
-                          <th key={day} className={cn(
-                            "p-3 border-b border-slate-200 text-center min-w-[120px] transition-colors",
-                            day.startsWith('Sáb') || day.startsWith('Dom') ? "bg-rose-50/40" : ""
-                          )}>
-                            <p className={cn("text-[10px] font-bold", day.startsWith('Sáb') || day.startsWith('Dom') ? "text-rose-600" : "text-slate-400")}>
-                              {day.split(' ')[0]}
-                            </p>
-                            <p className={cn("text-lg font-black leading-none mt-1", day.startsWith('Sáb') || day.startsWith('Dom') ? "text-rose-700" : "text-slate-800")}>
-                              {day.split(' ')[1]}
-                            </p>
-                          </th>
-                        ))}
+                        {daysToShow.map(day => {
+                          const isWeekend = isDayWeekend(day);
+                          const isToday = isDateToday(day);
+                          const weekdayName = getDayWeekdayLong(day);
+
+                          return (
+                            <th 
+                              key={day} 
+                              className={cn(
+                                "p-3 border-b border-slate-200 text-center min-w-[130px] transition-colors relative",
+                                isWeekend ? "bg-rose-50/40" : "",
+                                isToday ? "bg-blue-50/70 ring-1 ring-blue-500/40 ring-inset" : ""
+                              )}
+                            >
+                              <div className="flex items-center justify-center gap-1.5">
+                                <p className={cn(
+                                  "text-[10px] font-bold uppercase tracking-wider",
+                                  isWeekend ? "text-rose-600" : isToday ? "text-blue-700" : "text-slate-400"
+                                )}>
+                                  {weekdayName}
+                                </p>
+                                {isToday && (
+                                  <span className="px-1.5 py-0.2 bg-blue-600 text-white rounded text-[8px] font-black uppercase tracking-wider">
+                                    Hoje
+                                  </span>
+                                )}
+                              </div>
+                              <p className={cn(
+                                "text-sm font-black leading-none mt-1 font-mono tracking-tight",
+                                isWeekend ? "text-rose-700" : isToday ? "text-blue-950" : "text-slate-800"
+                              )}>
+                                {day}
+                              </p>
+                            </th>
+                          );
+                        })}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200/80">
                       
                       {/* Grid Rows */}
-                      {['Cozinheiro de Dia', 'Copeiro de Dia', 'Auxiliar do Copeiro de Dia', 'Ceia de Dia', 'Auxiliar do Escritório'].map((post, postIdx) => {
+                      {['Cozinheiro de Dia', 'Copeiro de Dia', 'Auxiliar do Copeiro de Dia', 'Ceia de Dia'].map((post, postIdx) => {
                         // Skip row if a filter function is selected and doesn't match
                         if (filterFunction !== 'Todas as Funções' && filterFunction !== post) return null;
 
@@ -1587,7 +2214,7 @@ export default function RosterApp() {
                                   onClick={() => { setSelectedCell({ day, post }); setIsAssigning(true); }}
                                   className={cn(
                                     "p-2.5 border-r border-slate-200/80 text-center cursor-pointer transition-all hover:bg-blue-50/20",
-                                    day.startsWith('Sáb') || day.startsWith('Dom') ? "bg-rose-50/10 hover:bg-rose-100/10" : "",
+                                    isDayWeekend(day) ? "bg-rose-50/10 hover:bg-rose-100/10" : "",
                                     isHighlighted ? "bg-yellow-100/80 ring-2 ring-yellow-400 ring-inset" : ""
                                   )}
                                 >
@@ -1741,8 +2368,8 @@ export default function RosterApp() {
             </div>
           )}
 
-          {/* TAB 2: WEEKDAY ROSTER / ESCALA PRETA */}
-          {activeTab === 'preta' && (
+          {/* Sub-view 2: Escala Preta (Dias Úteis) */}
+          {gestaoSubTab === 'preta' && (
             <div className="grid grid-cols-12 gap-6">
               
               {/* Left personnel list and toggles */}
@@ -1785,9 +2412,8 @@ export default function RosterApp() {
                             >
                               <option value="Cozinheiro de Dia">Cozinheiro de Dia</option>
                               <option value="Copeiro de Dia">Copeiro de Dia</option>
-                              <option value="Auxiliar do Copeiro de Dia">Copeiro de Dia</option>
+                              <option value="Auxiliar do Copeiro de Dia">Aux. Copeiro de Dia</option>
                               <option value="Ceia de Dia">Ceia de Dia</option>
-                              <option value="Auxiliar do Escritório">Auxiliar do Escritório</option>
                             </select>
                           </td>
                         </tr>
@@ -1867,8 +2493,8 @@ export default function RosterApp() {
             </div>
           )}
 
-          {/* TAB 3: WEEKEND ROSTER / ESCALA VERMELHA */}
-          {activeTab === 'vermelha' && (
+          {/* Sub-view 3: Escala Vermelha (Fins de Semana) */}
+          {gestaoSubTab === 'vermelha' && (
             <div className="grid grid-cols-12 gap-6">
               
               {/* Personnel table */}
@@ -1911,9 +2537,8 @@ export default function RosterApp() {
                             >
                               <option value="Cozinheiro de Dia">Cozinheiro de Dia</option>
                               <option value="Copeiro de Dia">Copeiro de Dia</option>
-                              <option value="Auxiliar do Copeiro de Dia">Copeiro de Dia</option>
+                              <option value="Auxiliar do Copeiro de Dia">Aux. Copeiro de Dia</option>
                               <option value="Ceia de Dia">Ceia de Dia</option>
-                              <option value="Auxiliar do Escritório">Auxiliar do Escritório</option>
                             </select>
                           </td>
                         </tr>
@@ -1998,6 +2623,9 @@ export default function RosterApp() {
               </div>
 
             </div>
+          )}
+
+          </div>
           )}
 
           {/* TAB 4: ABSENCES / AFASTAMENTOS */}
@@ -2482,7 +3110,7 @@ export default function RosterApp() {
                           {selectedReportType === 'equity' && 'Distribuição de Escalas e Equidade'}
                         </h4>
                         <p className="text-[10px] text-slate-500 font-semibold tracking-wider mt-1.5 uppercase">
-                          Setor de Aprovisionamento - H Ge SM | JULHO DE 2026
+                          Setor de Aprovisionamento - H Ge SM | SEMANA ATUAL ({formatDateDDMMAAAA(new Date())})
                         </p>
                       </div>
 
@@ -2496,25 +3124,26 @@ export default function RosterApp() {
                               <thead>
                                 <tr className="bg-slate-100 border-b border-slate-300 font-bold uppercase tracking-wider text-[10px]">
                                   <th className="p-2 border-r border-slate-300">FUNÇÃO / POSTO</th>
-                                  {ALL_DAYS.slice(0, 5).map((day, idx) => (
-                                    <th key={day} className={cn("p-2 text-center", idx < 4 ? "border-r border-slate-300" : "")}>
-                                      {day}
+                                  {currentWeekDates.map((day, idx) => (
+                                    <th key={day} className={cn("p-2 text-center", idx < currentWeekDates.length - 1 ? "border-r border-slate-300" : "")}>
+                                      <div className="text-[9px] font-bold text-slate-500">{getDayWeekdayShort(day)}</div>
+                                      <div className="text-[10px] font-mono">{day}</div>
                                     </th>
                                   ))}
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-slate-200">
-                                {['Cozinheiro de Dia', 'Copeiro de Dia', 'Auxiliar do Copeiro de Dia', 'Ceia de Dia', 'Auxiliar do Escritório'].map(post => (
+                                {['Cozinheiro de Dia', 'Copeiro de Dia', 'Auxiliar do Copeiro de Dia', 'Ceia de Dia'].map(post => (
                                   <tr key={post}>
                                     <td className="p-2 border-r border-slate-300 font-bold bg-slate-50/50">{getSpecialtyDisplayName(post)}</td>
-                                    {ALL_DAYS.slice(0, 5).map(day => {
+                                    {currentWeekDates.map(day => {
                                       const cell = roster[day] ? roster[day][post] : null;
                                       return (
                                         <td key={day} className="p-2 border-r border-slate-300 text-center">
                                           {cell ? (
-                                            <p className="font-semibold">{cell.rank}. {cell.militaryName}</p>
+                                            <p className="font-semibold text-[10px] truncate">{cell.rank}. {cell.militaryName}</p>
                                           ) : (
-                                            <span className="text-slate-400 italic">VAGO</span>
+                                            <span className="text-slate-400 italic text-[10px]">VAGO</span>
                                           )}
                                         </td>
                                       );
@@ -2631,7 +3260,7 @@ export default function RosterApp() {
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-slate-100">
-                                {['Cozinheiro de Dia', 'Copeiro de Dia', 'Auxiliar do Copeiro de Dia', 'Ceia de Dia', 'Auxiliar do Escritório'].map(spec => {
+                                {['Cozinheiro de Dia', 'Copeiro de Dia', 'Auxiliar do Copeiro de Dia', 'Ceia de Dia'].map(spec => {
                                   const count = Object.values(roster).flatMap(d => Object.entries(d)).filter(([p, cell]) => p === spec && cell !== null && cell.type !== 'DISP').length;
                                   const totalDays = Object.keys(roster).length;
                                   const pct = totalDays > 0 ? Math.round((count / totalDays) * 100) : 0;
@@ -2923,7 +3552,6 @@ export default function RosterApp() {
                         <option value="Copeiro de Dia">Copeiro de Dia</option>
                         <option value="Auxiliar do Copeiro de Dia">Auxiliar do Copeiro de Dia</option>
                         <option value="Ceia de Dia">Ceia de Dia</option>
-                        <option value="Auxiliar do Escritório">Auxiliar do Escritório</option>
                       </select>
                     </div>
 
@@ -2939,7 +3567,6 @@ export default function RosterApp() {
                         <option value="Copeiro de Dia">Copeiro de Dia</option>
                         <option value="Auxiliar do Copeiro de Dia">Auxiliar do Copeiro de Dia</option>
                         <option value="Ceia de Dia">Ceia de Dia</option>
-                        <option value="Auxiliar do Escritório">Auxiliar do Escritório</option>
                       </select>
                     </div>
                   </div>
@@ -3008,7 +3635,7 @@ export default function RosterApp() {
             <div className="px-6 py-4 bg-slate-100 border-b border-slate-200/80 flex justify-between items-center">
               <div>
                 <h4 className="font-bold text-slate-900 text-sm">Alocar Militar Manualmente</h4>
-                <p className="text-xs text-slate-500">{getSpecialtyDisplayName(selectedCell.post)} — {selectedCell.day}</p>
+                <p className="text-xs text-slate-500">{getSpecialtyDisplayName(selectedCell.post)} — {selectedCell.day} ({getDayWeekdayLong(selectedCell.day)})</p>
               </div>
               <button 
                 onClick={() => { setIsAssigning(false); setSelectedCell(null); }}
@@ -3071,10 +3698,71 @@ export default function RosterApp() {
                   <X className="w-4 h-4" />
                 </button>
 
+                {/* Direct selector for Ceia de Dia: Copeiro or Auxiliar of the day */}
+                {selectedCell.post === 'Ceia de Dia' && (() => {
+                  const dayObj = roster[selectedCell.day] || {};
+                  const copeiro = dayObj['Copeiro de Dia'];
+                  const aux = dayObj['Auxiliar do Copeiro de Dia'];
+                  if (!copeiro && !aux) return null;
+
+                  return (
+                    <div className="p-3 bg-blue-50/70 border border-blue-200 rounded-lg space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-bold text-blue-950 uppercase tracking-wide flex items-center gap-1.5">
+                          <Utensils className="w-3.5 h-3.5 text-blue-600" />
+                          Escalados no Dia (Copeiro / Auxiliar)
+                        </span>
+                        <span className="text-[9px] bg-blue-200/70 text-blue-800 font-bold px-1.5 py-0.5 rounded">
+                          Regra da Ceia
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-blue-800 leading-snug">
+                        Para a <strong>Ceia de Dia</strong>, pode ser escolhido o Copeiro ou o Auxiliar já escalado neste dia:
+                      </p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                        {copeiro && (
+                          <button
+                            type="button"
+                            onClick={() => handleAssignMilitary(copeiro.militaryId)}
+                            className="flex items-center justify-between p-2.5 rounded-lg bg-white border border-blue-200 hover:border-blue-400 hover:bg-blue-50/50 text-left transition-all shadow-2xs group"
+                          >
+                            <div>
+                              <span className="text-[9px] font-bold text-blue-600 uppercase block">Copeiro de Dia</span>
+                              <p className="text-xs font-bold text-slate-800 group-hover:text-blue-700">
+                                {copeiro.rank}. {copeiro.militaryName}
+                              </p>
+                            </div>
+                            <span className="text-[10px] font-bold text-blue-700 bg-blue-50 group-hover:bg-blue-100 px-2 py-1 rounded">
+                              Escalar
+                            </span>
+                          </button>
+                        )}
+                        {aux && (
+                          <button
+                            type="button"
+                            onClick={() => handleAssignMilitary(aux.militaryId)}
+                            className="flex items-center justify-between p-2.5 rounded-lg bg-white border border-blue-200 hover:border-blue-400 hover:bg-blue-50/50 text-left transition-all shadow-2xs group"
+                          >
+                            <div>
+                              <span className="text-[9px] font-bold text-blue-600 uppercase block">Aux. Copeiro de Dia</span>
+                              <p className="text-xs font-bold text-slate-800 group-hover:text-blue-700">
+                                {aux.rank}. {aux.militaryName}
+                              </p>
+                            </div>
+                            <span className="text-[10px] font-bold text-blue-700 bg-blue-50 group-hover:bg-blue-100 px-2 py-1 rounded">
+                              Escalar
+                            </span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 {/* Filter list of eligible military */}
                 {militaryList
                   .filter(mil => {
-                    const isWeekend = selectedCell.day.startsWith('Sáb') || selectedCell.day.startsWith('Dom');
+                    const isWeekend = isDayWeekend(selectedCell.day);
                     if (isWeekend) {
                       return mil.type === 'EV' || mil.type === 'Ambas';
                     } else {
@@ -3082,10 +3770,12 @@ export default function RosterApp() {
                     }
                   })
                   .map(mil => {
-                    const otherPostAssigned = Object.keys(roster[selectedCell.day]).find(
-                      p => p !== selectedCell.post && roster[selectedCell.day][p]?.militaryId === mil.id
+                    const dayObj = roster[selectedCell.day] || {};
+                    const otherPostAssigned = Object.keys(dayObj).find(
+                      p => p !== selectedCell.post && dayObj[p]?.militaryId === mil.id
                     );
-                    const isOccupiedToday = !!otherPostAssigned;
+                    const isOverlapAllowed = !!otherPostAssigned && isAllowedOverlap(selectedCell.post, otherPostAssigned);
+                    const isOccupiedToday = !!otherPostAssigned && !isOverlapAllowed;
                     const isDisabled = mil.status === 'Afastado' || isOccupiedToday;
 
                     return (
@@ -3098,11 +3788,16 @@ export default function RosterApp() {
                           "w-full flex items-center justify-between p-3 rounded-lg border text-left text-xs transition-all",
                           isDisabled 
                             ? "border-slate-100 bg-slate-50/50 opacity-50 cursor-not-allowed" 
-                            : "border-slate-200 bg-white hover:border-slate-400 hover:bg-slate-50"
+                            : isOverlapAllowed
+                              ? "border-blue-200 bg-blue-50/30 hover:border-blue-400 hover:bg-blue-50/60"
+                              : "border-slate-200 bg-white hover:border-slate-400 hover:bg-slate-50"
                         )}
                       >
                         <div className="flex items-center gap-3">
-                          <span className="w-8 h-8 rounded bg-slate-100 flex items-center justify-center font-bold font-mono text-[10px] text-slate-500">
+                          <span className={cn(
+                            "w-8 h-8 rounded flex items-center justify-center font-bold font-mono text-[10px]",
+                            isOverlapAllowed ? "bg-blue-100 text-blue-800" : "bg-slate-100 text-slate-500"
+                          )}>
                             {mil.dutyCount}
                           </span>
                           <div>
@@ -3111,12 +3806,21 @@ export default function RosterApp() {
                               {getSpecialtyDisplayName(mil.specialty)}
                               {mil.specialtySecondary ? ` / ${getSpecialtyDisplayName(mil.specialtySecondary)}` : ''}
                               {mil.status === 'Afastado' ? ' — Afastado' : ''}
-                              {isOccupiedToday ? ` — Já Escalado em ${otherPostAssigned}` : ''}
+                              {isOverlapAllowed ? ` — Escalado hoje em ${getSpecialtyDisplayName(otherPostAssigned!)} (Permitido para Ceia)` : isOccupiedToday ? ` — Já Escalado em ${getSpecialtyDisplayName(otherPostAssigned!)}` : ''}
                             </p>
                           </div>
                         </div>
-                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                          {isOccupiedToday ? 'INDISPONÍVEL' : mil.dutyCount === 0 ? 'Sem Serviços' : `${mil.dutyCount} sv`}
+                        <span className={cn(
+                          "text-[10px] font-bold uppercase tracking-wider",
+                          isOverlapAllowed ? "text-blue-700" : "text-slate-400"
+                        )}>
+                          {isOverlapAllowed 
+                            ? 'Permitido (Ceia)' 
+                            : isOccupiedToday 
+                              ? 'INDISPONÍVEL' 
+                              : mil.dutyCount === 0 
+                                ? 'Sem Serviços' 
+                                : `${mil.dutyCount} sv`}
                         </span>
                       </button>
                     );
@@ -3215,7 +3919,6 @@ export default function RosterApp() {
                     <option value="Copeiro de Dia">Copeiro de Dia</option>
                     <option value="Auxiliar do Copeiro de Dia">Auxiliar do Copeiro de Dia</option>
                     <option value="Ceia de Dia">Ceia de Dia</option>
-                    <option value="Auxiliar do Escritório">Auxiliar do Escritório</option>
                   </select>
                 </div>
 
@@ -3231,7 +3934,6 @@ export default function RosterApp() {
                     <option value="Copeiro de Dia">Copeiro de Dia</option>
                     <option value="Auxiliar do Copeiro de Dia">Auxiliar do Copeiro de Dia</option>
                     <option value="Ceia de Dia">Ceia de Dia</option>
-                    <option value="Auxiliar do Escritório">Auxiliar do Escritório</option>
                   </select>
                 </div>
               </div>

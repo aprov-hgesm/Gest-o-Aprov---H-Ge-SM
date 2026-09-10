@@ -1,0 +1,96 @@
+{
+  "entities": {
+    "Military": {
+      "title": "Military",
+      "description": "Militar cadastrado na seção de Aprovisionamento",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64 },
+        "rank": { "type": "string", "maxLength": 20 },
+        "name": { "type": "string", "maxLength": 64 },
+        "fullName": { "type": "string", "maxLength": 128 },
+        "matricula": { "type": "string", "maxLength": 32 },
+        "specialty": { "type": "string", "maxLength": 64 },
+        "specialtySecondary": { "type": "string", "maxLength": 64 },
+        "status": { "type": "string", "enum": ["Ativo", "Afastado"] },
+        "type": { "type": "string", "enum": ["EP", "EV", "Ambas"] },
+        "dutyCount": { "type": "number" }
+      },
+      "required": ["id", "rank", "name", "fullName", "matricula", "specialty", "status", "type", "dutyCount"]
+    },
+    "RosterDay": {
+      "title": "RosterDay",
+      "description": "Escala diária de serviços com alocação por função",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string", "maxLength": 20 },
+        "assignments": { "type": "object" },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["date", "assignments"]
+    },
+    "Absence": {
+      "title": "Absence",
+      "description": "Registro de afastamento ou dispensa de militar",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64 },
+        "militaryId": { "type": "string", "maxLength": 64 },
+        "militaryName": { "type": "string", "maxLength": 64 },
+        "rank": { "type": "string", "maxLength": 20 },
+        "type": { "type": "string", "maxLength": 64 },
+        "startDate": { "type": "string", "maxLength": 20 },
+        "endDate": { "type": "string", "maxLength": 20 },
+        "reason": { "type": "string", "maxLength": 256 },
+        "status": { "type": "string", "enum": ["ATIVO", "CONCLUIDO"] },
+        "createdAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "militaryId", "militaryName", "rank", "type", "startDate", "endDate", "status"]
+    },
+    "Changelog": {
+      "title": "Changelog",
+      "description": "Registro de auditoria de alterações nas escalas",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64 },
+        "timestamp": { "type": "string", "maxLength": 64 },
+        "text": { "type": "string", "maxLength": 512 },
+        "author": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "timestamp", "text"]
+    },
+    "Setting": {
+      "title": "Setting",
+      "description": "Configurações gerais do sistema de escalas",
+      "type": "object",
+      "properties": {
+        "minEfetivoPreta": { "type": "number" },
+        "minEfetivoVermelha": { "type": "number" },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["minEfetivoPreta", "minEfetivoVermelha"]
+    }
+  },
+  "firestore": {
+    "/militaries/{militaryId}": {
+      "schema": { "$ref": "#/entities/Military" },
+      "description": "Coleção de militares do efetivo"
+    },
+    "/rosters/{rosterId}": {
+      "schema": { "$ref": "#/entities/RosterDay" },
+      "description": "Coleção de escalas diárias salvas"
+    },
+    "/absences/{absenceId}": {
+      "schema": { "$ref": "#/entities/Absence" },
+      "description": "Coleção de dispensas e afastamentos"
+    },
+    "/changelogs/{logId}": {
+      "schema": { "$ref": "#/entities/Changelog" },
+      "description": "Coleção de histórico e auditoria"
+    },
+    "/settings/{settingId}": {
+      "schema": { "$ref": "#/entities/Setting" },
+      "description": "Configurações gerais do serviço"
+    }
+  }
+}
