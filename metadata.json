@@ -1,6 +1,6 @@
 {
-  "name": "Escalas - Aprov H Ge SM",
-  "description": "Sistema completo de gestão, controle e geração automática de escalas de serviço militar.",
+  "name": "Gestão de Aprov",
+  "description": "Sistema de gestão e operação manual de escalas de serviço e elaboração de cardápio semanal de aprovisionamento.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

@@ -8,8 +8,8 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: 'Escalas - Aprov H Ge SM',
-  description: 'Sistema completo de gestão, controle e geração automática de escalas de serviço militar.',
+  title: 'Gestão de Aprov - Gestão de Escalas & Cardápio Semanal',
+  description: 'Sistema de gestão e operação manual de escalas de serviço e elaboração de cardápio semanal de aprovisionamento.',
 };
 
 export default function RootLayout({children}: {children: React.ReactNode}) {
