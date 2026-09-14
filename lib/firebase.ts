@@ -11,21 +11,35 @@ import {
   getFirestore, 
   doc, 
   getDocFromServer,
-  collection,
-  getDocs,
-  setDoc,
-  deleteDoc,
-  onSnapshot
+  connectFirestoreEmulator
 } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
 // Initialize Firebase App
-const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
+const useEmulator = !!process.env.NEXT_PUBLIC_FIRESTORE_EMULATOR_HOST && process.env.NODE_ENV !== 'production';
+const app = getApps().length > 0 ? getApp() : initializeApp(
+  useEmulator ? { ...firebaseConfig, projectId: 'demo-aprov' } : firebaseConfig
+);
 
 // Initialize Firestore
 export const db = firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)'
   ? getFirestore(app, firebaseConfig.firestoreDatabaseId)
   : getFirestore(app);
+
+// Emulator access is explicit and limited to local development hosts.
+const emulatorHost = process.env.NEXT_PUBLIC_FIRESTORE_EMULATOR_HOST;
+if (emulatorHost && typeof window !== 'undefined' && process.env.NODE_ENV !== 'production') {
+  const [host, portText] = emulatorHost.split(':');
+  if (!['127.0.0.1', 'localhost'].includes(host) || !/^\d+$/.test(portText ?? '')) {
+    throw new Error('Use localhost:porta para o emulador do Firestore.');
+  }
+  const globals = globalThis as typeof globalThis & { __aprovFirestoreEmulators?: WeakSet<object> };
+  globals.__aprovFirestoreEmulators ??= new WeakSet<object>();
+  if (!globals.__aprovFirestoreEmulators.has(db)) {
+    connectFirestoreEmulator(db, host, Number(portText));
+    globals.__aprovFirestoreEmulators.add(db);
+  }
+}
 
 // Initialize Authentication
 export const auth = getAuth(app);
@@ -89,7 +103,7 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 // ==========================================
 export async function testConnection(): Promise<boolean> {
   try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
+    await getDocFromServer(doc(db, 'aprov_workspaces', 'hgesm', 'roster', 'principal'));
     return true;
   } catch (error) {
     if (error instanceof Error && error.message.includes('the client is offline')) {
