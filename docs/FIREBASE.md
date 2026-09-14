@@ -75,3 +75,5 @@ Eles exercitam as mesmas regras restritas: acesso não autenticado negado, grava
 controle de revisão, idempotência, escuta em tempo real e proibição de alteração de permissões pelo cliente.
 O workflow do GitHub executa essas verificações em cada alteração.
 A validação no emulador não confirma domínios, provedores, regras publicadas ou acesso ao projeto real.
+
+O CI também abre dois contextos independentes do Chromium, migra dados locais pela interface, duplica uma semana, altera o fluxo de conferência e verifica a atualização no segundo cliente e após recarregar a página. A regra permissiva em tests/firestore.browser.rules é uma fixture exclusiva desse emulador sem login; não integra firebase.json nem o comando de deploy. Os testes de segurança usam as regras restritas reais do repositório.

@@ -8,22 +8,7 @@ import { SyncConflict, type RecordMap } from '../lib/persistence/core.ts';
 
 const host = process.env.FIRESTORE_EMULATOR_HOST;
 const enabled = host === '127.0.0.1:8080' && process.env.GCLOUD_PROJECT === 'demo-aprov';
-function sample(id: string) {
-  return {
-    id, dataInicio: '2026-09-14', dataFim: '2026-09-20', dataEmissao: '2026-09-14',
-    cidade: 'Santa Maria', uf: 'RS', regiaoMilitar: '3', organizacaoMilitar: 'Teste', divisao: 'Aprov',
-    workflow: { status: 'EM_ELABORACAO', conferido: { cargo: '', responsavel: '', status: 'PENDENTE' },
-      aprovado: { cargo: '', responsavel: '', status: 'PENDENTE' } },
-    lancheTexto: '', ceiaPacienteTexto: '', observacaoGeral: '', basicoCopaInternados: '',
-    responsavelTecnico: { nome: '', postoGraduacao: '', funcao: '' },
-    dias: Array.from({ length: 7 }, (_, index) => ({
-      date: '2026-09-' + (14 + index), diaSemana: 'Dia', diaSemanaLabel: 'DIA',
-      cafeManhaCeia: '', colacaoPaciente: '', ceia: '',
-      almoco: { geral: { arroz: '', feijao: '', proteina: '', guarnicao: '', salada: '', bebida: '', sobremesa: '' },
-        pacienteProteina: '' }, jantarPaciente: { prato: '' }
-    }))
-  };
-}
+import { sample } from './fixtures.ts';
 function client(name: string, uid?: string) {
   if (!enabled) throw new Error('Integration tests require the local demo-aprov emulator.');
   const app = initializeApp({ projectId: 'demo-aprov', apiKey: 'demo-key', appId: 'demo-app' }, name);
@@ -61,8 +46,10 @@ test('real Firestore transactions, subscriptions, conflicts, idempotency and sec
       portOne.commit({ id: 'edit-one', changes: [{ id, data: { ...data, cidade: 'Primeiro' }, deleted: false, expectedRevision: 1 }] }),
       portTwo.commit({ id: 'edit-two', changes: [{ id, data: { ...data, cidade: 'Segundo' }, deleted: false, expectedRevision: 1 }] })
     ]);
-    assert.equal(writes.filter(result => result.status === 'fulfilled').length, 1);
-    assert.equal(writes.filter(result => result.status === 'rejected' && result.reason instanceof SyncConflict).length, 1);
+    const detail = JSON.stringify(writes.map(result => result.status === 'fulfilled' ? { status: result.status } :
+      { status: result.status, name: result.reason?.name, message: result.reason?.message, code: result.reason?.code }));
+    assert.equal(writes.filter(result => result.status === 'fulfilled').length, 1, detail);
+    assert.equal(writes.filter(result => result.status === 'rejected' && result.reason instanceof SyncConflict).length, 1, detail);
     await assert.rejects(deleteDoc(doc(one.db, 'aprov_workspaces/hgesm/cardapios/' + id)));
     await assert.rejects(setDoc(doc(one.db, 'aprov_members/editor'), { enabled: true, role: 'admin' }));
     await assert.rejects(setDoc(doc(one.db, 'aprov_workspaces/hgesm/cardapios/' + id),

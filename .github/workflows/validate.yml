@@ -26,16 +26,8 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      - name: Reconcile existing lockfile
-        run: |
-          bun install
-          node --input-type=module <<'JS'
-          import { readFileSync } from 'node:fs';
-          const lock = readFileSync('bun.lock', 'utf8');
-          for (let offset = 0; offset < lock.length; offset += 8192) {
-            console.log('APROV_LOCK_CHUNK ' + JSON.stringify(lock.slice(offset, offset + 8192)));
-          }
-          JS
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
       - name: TypeScript
         run: bun run typecheck
       - name: Persistence and recovery tests
@@ -46,3 +38,18 @@ jobs:
         run: bun run build
         env:
           NODE_ENV: production
+      - name: Prepare isolated browser test tools
+        run: |
+          npm install --prefix /tmp/aprov-browser-tools --no-save --package-lock=false playwright
+          node /tmp/aprov-browser-tools/node_modules/playwright/cli.js install --with-deps chromium
+      - name: Two-browser smoke test
+        run: bunx firebase emulators:exec --only firestore --project demo-aprov --config tests/firebase.browser.json "node tests/browser-smoke.mjs"
+        env:
+          APROV_PLAYWRIGHT_MODULE: /tmp/aprov-browser-tools/node_modules/playwright/index.mjs
+      - name: Upload browser screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: firestore-browser-check
+          path: test-results/
+          if-no-files-found: ignore

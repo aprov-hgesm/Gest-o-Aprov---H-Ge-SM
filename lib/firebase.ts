@@ -16,7 +16,10 @@ import {
 import firebaseConfig from '../firebase-applet-config.json';
 
 // Initialize Firebase App
-const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
+const useEmulator = !!process.env.NEXT_PUBLIC_FIRESTORE_EMULATOR_HOST && process.env.NODE_ENV !== 'production';
+const app = getApps().length > 0 ? getApp() : initializeApp(
+  useEmulator ? { ...firebaseConfig, projectId: 'demo-aprov' } : firebaseConfig
+);
 
 // Initialize Firestore
 export const db = firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)'

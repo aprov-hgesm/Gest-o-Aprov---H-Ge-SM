@@ -1,9 +1,9 @@
 import {
-  collection, doc, onSnapshot, runTransaction, serverTimestamp,
+  collection, doc, getDocFromServer, onSnapshot, runTransaction, serverTimestamp,
   type Firestore, type Unsubscribe
 } from 'firebase/firestore';
 import {
-  validateCurrent, validateRecords,
+  validateCurrent, validateRecords, SyncConflict,
   type Attempt, type Identified, type RecordMap, type StoredRecord
 } from './core.ts';
 
@@ -61,6 +61,23 @@ export function firestorePort<T extends Identified>(
           result[change.id] = record;
         }
         return result;
+      }).catch(async (error: unknown) => {
+        const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : '';
+        // Rules may reject a competing revision before the SDK reports contention.
+        // Confirm a changed remote revision before labeling an authorization failure as a conflict.
+        if (code === 'permission-denied' || code === 'aborted') {
+          let snapshots;
+          try { snapshots = await Promise.all(attempt.changes.map(change => getDocFromServer(doc(ref, change.id)))); }
+          catch { throw error; }
+          for (let index = 0; index < snapshots.length; index++) {
+            const snapshot = snapshots[index], change = attempt.changes[index];
+            const current = snapshot.exists() ? decode(change.id, snapshot.data()) : undefined;
+            if ((current?.revision ?? 0) !== change.expectedRevision && current?.mutationId !== attempt.id) {
+              throw new SyncConflict(change.id);
+            }
+          }
+        }
+        throw error;
       });
     }
   };
