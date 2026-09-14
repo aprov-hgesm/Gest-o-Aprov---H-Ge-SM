@@ -19,6 +19,18 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.4.2'
+      - name: Make meat badge selector precise
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/refactor_cardapio_ui.py')
+          text = path.read_text(encoding='utf-8')
+          old = "replace_once('Detalhamento Interno', 'Operacional', 'meat panel badge')"
+          new = "replace_once('>\\n                      Detalhamento Interno\\n                    </span>', '>\\n                      Operacional\\n                    </span>', 'meat panel badge')"
+          if text.count(old) != 1:
+              raise SystemExit('Expected ambiguous badge selector once')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
       - name: Apply visual refactor
         run: python3 scripts/refactor_cardapio_ui.py
       - name: Install locked dependencies
