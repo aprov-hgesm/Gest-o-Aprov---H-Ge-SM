@@ -412,6 +412,7 @@ export const generateWeeklyDates = (mondayIso: string): DayCardapio[] => {
         pacienteProteina: i === 2 ? 'ALCATRA GRELHADA EM TIRAS' : 'PEITO FRANGO GRELHADO'
       },
       jantarPaciente: {
+        proteina: '',
         prato: 'Arroz, feijão, ISCAS DE CARNE ACEBOLADA, legumes ao vapor, sopa de legumes, fruta'
       },
       ceia: 'Chá mate, pão francês com queijo, biscoito doce'
@@ -789,6 +790,7 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
         pacienteProteina: ''
       },
       jantarPaciente: {
+        proteina: '',
         prato: ''
       },
       ceia: ''
@@ -1211,7 +1213,7 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
       txt += `• Almoço Geral: ${d.almoco.geral.arroz}, ${d.almoco.geral.feijao}, ${d.almoco.geral.proteina.toUpperCase()}, ${d.almoco.geral.guarnicao}, ${d.almoco.geral.salada}, ${d.almoco.geral.bebida}, ${d.almoco.geral.sobremesa}\n`;
       txt += `• Almoço Paciente: PACIENTE: ${d.almoco.pacienteProteina.toUpperCase()}\n`;
       txt += `• Lanche: ${currentCardapio.lancheTexto}\n`;
-      txt += `• Jantar Paciente: ${d.jantarPaciente.prato}\n`;
+      txt += `• Jantar Paciente: ${d.jantarPaciente.proteina ? `${d.jantarPaciente.proteina.toUpperCase()}${d.jantarPaciente.prato ? ', ' : ''}` : ''}${d.jantarPaciente.prato}\n`;
       txt += `• Ceia Paciente: ${currentCardapio.ceiaPacienteTexto}\n`;
       txt += `• Ceia: ${d.ceia}\n\n`;
     });
@@ -1253,14 +1255,19 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
     );
   };
 
-  // Format Jantar string with protein bolding if detected (uppercase words/dishes)
+  // Format Jantar with an explicit protein field; legacy cardápios without the field remain unchanged.
   const renderJantarContent = (day: DayCardapio) => {
+    const protein = day.jantarPaciente.proteina?.trim() || '';
     const text = day.jantarPaciente.prato || '';
-    if (!text) return <span className="text-slate-400 italic">Jantar a definir</span>;
+    if (!protein && !text) return <span className="text-slate-400 italic">Jantar a definir</span>;
 
-    const parts = text.split(',');
+    const parts = text ? text.split(',') : [];
     return (
       <div className="text-[11px] leading-snug text-slate-900">
+        {protein && (
+          <span className="font-black text-black uppercase">{protein.toUpperCase()}</span>
+        )}
+        {protein && parts.length > 0 && ', '}
         {parts.map((part, pIdx) => {
           const trimmed = part.trim();
           const isUppercase = trimmed.length > 2 && trimmed === trimmed.toUpperCase() && /[A-Z]/.test(trimmed);
@@ -1721,7 +1728,7 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
                       </div>
                       <div>
                         <span className="text-slate-400 font-bold block uppercase">Jantar Paciente</span>
-                        <span className="text-slate-700 line-clamp-1">{dia.jantarPaciente.prato}</span>
+                        <span className="text-slate-700 line-clamp-1">{dia.jantarPaciente.proteina ? `${dia.jantarPaciente.proteina.toUpperCase()}${dia.jantarPaciente.prato ? ` • ${dia.jantarPaciente.prato}` : ''}` : dia.jantarPaciente.prato}</span>
                       </div>
                     </div>
                   </div>
@@ -2371,7 +2378,7 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between">
                     <label className="text-[10px] font-black text-emerald-900 uppercase tracking-wide block">
-                      Proteína Principal (Preparação no Cardápio) *
+                      Proteína 1 — Almoço Geral *
                     </label>
                     <span className="text-[9.5px] text-emerald-700 font-bold">
                       Impressa em negrito e maiúsculas no A4
@@ -2791,7 +2798,7 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
                 {/* Opção do Paciente */}
                 <div className="pt-2 border-t border-emerald-200">
                   <label className="text-[10px] font-black text-emerald-950 uppercase tracking-wide block">
-                    Cardápio do Paciente (Proteína Especial)
+                    Proteína 2 — Almoço do Paciente
                   </label>
                   <div className="flex items-center gap-2 mt-1">
                     <span className="font-bold text-slate-500 text-xs">PACIENTE:</span>
@@ -2830,50 +2837,95 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
 
               {/* Refeição 5: Jantar PACIENTE */}
               <div className={cn(
-                "p-3 rounded-xl border transition-all space-y-1.5",
+                "p-3 rounded-xl border transition-all space-y-3",
                 editingFocusMeal === 'jantar' ? "bg-emerald-50/50 border-emerald-400 ring-2 ring-emerald-200" : "bg-white border-slate-200",
                 editingFocusMeal !== 'all' && editingFocusMeal !== 'jantar' && "hidden"
               )}>
                 <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-slate-800 block">
-                    Jantar PACIENTE (Palavras em maiúsculas ganham destaque em negrito)
-                  </label>
+                  <div>
+                    <label className="text-xs font-bold text-slate-800 block">
+                      Jantar PACIENTE
+                    </label>
+                    <p className="text-[10px] text-slate-500">
+                      Cadastre a proteína separadamente dos acompanhamentos para facilitar a leitura do cardápio.
+                    </p>
+                  </div>
                   {editingFocusMeal === 'jantar' && (
                     <span className="text-[10px] font-bold text-emerald-700">Campo focado</span>
                   )}
                 </div>
-                <textarea
-                  rows={2}
-                  value={currentCardapio.dias[editingDayIndex].jantarPaciente.prato}
-                  onChange={e => {
-                    const updated = JSON.parse(JSON.stringify(currentCardapio)) as WeeklyCardapioDoc;
-                    updated.dias[editingDayIndex].jantarPaciente.prato = e.target.value;
-                    updateCurrentCardapio(updated);
-                  }}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-white"
-                  placeholder="Ex: Arroz, feijão, ISCAS DE CARNE ACEBOLADA, legumes ao vapor, sopa de legumes, fruta"
-                />
-                {/* Jantar chips */}
-                <div className="flex flex-wrap gap-1 pt-1">
-                  <span className="text-[10px] font-bold text-slate-400 mr-1">Sugestões rápidas:</span>
-                  {[
-                    'Arroz, feijão, ISCAS DE CARNE ACEBOLADA, sopa de legumes, fruta',
-                    'Arroz, feijão, PEITO DE FRANGO GRELHADO, purê, sopa, fruta',
-                    'Arroz, feijão, OMELETE DE FORNO COM LEGUMES, canja, fruta'
-                  ].map((j, jIdx) => (
-                    <button
-                      key={jIdx}
-                      type="button"
-                      onClick={() => {
-                        const updated = JSON.parse(JSON.stringify(currentCardapio)) as WeeklyCardapioDoc;
-                        updated.dias[editingDayIndex].jantarPaciente.prato = j;
-                        updateCurrentCardapio(updated);
-                      }}
-                      className="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[9.5px] text-left"
-                    >
-                      {j.split(',')[2] || j}
-                    </button>
-                  ))}
+
+                <div className="p-3 rounded-lg bg-emerald-50/60 border border-emerald-200 space-y-1.5">
+                  <label className="text-[10px] font-black text-emerald-950 uppercase tracking-wide block">
+                    Proteína 3 — Jantar do Paciente
+                  </label>
+                  <input
+                    type="text"
+                    value={currentCardapio.dias[editingDayIndex].jantarPaciente.proteina || ''}
+                    onChange={e => {
+                      const updated = JSON.parse(JSON.stringify(currentCardapio)) as WeeklyCardapioDoc;
+                      updated.dias[editingDayIndex].jantarPaciente.proteina = e.target.value;
+                      updateCurrentCardapio(updated);
+                    }}
+                    className="w-full px-3 py-2 border border-emerald-300 rounded-lg text-xs font-bold uppercase bg-white text-emerald-950"
+                    placeholder="Ex: ISCAS DE CARNE ACEBOLADA"
+                  />
+                  <div className="flex flex-wrap items-center gap-1 pt-1">
+                    <span className="text-[10px] font-bold text-slate-400 mr-1">Sugestões:</span>
+                    {PRESET_PACIENTE.map(p => (
+                      <button
+                        key={`jantar-${p}`}
+                        type="button"
+                        onClick={() => {
+                          const updated = JSON.parse(JSON.stringify(currentCardapio)) as WeeklyCardapioDoc;
+                          updated.dias[editingDayIndex].jantarPaciente.proteina = p;
+                          updateCurrentCardapio(updated);
+                        }}
+                        className="px-2 py-0.5 bg-white hover:bg-emerald-100 border border-emerald-200 text-emerald-900 rounded text-[9.5px] font-bold transition-colors"
+                      >
+                        {p}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold text-slate-600 uppercase block">
+                    Demais componentes do jantar
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={currentCardapio.dias[editingDayIndex].jantarPaciente.prato}
+                    onChange={e => {
+                      const updated = JSON.parse(JSON.stringify(currentCardapio)) as WeeklyCardapioDoc;
+                      updated.dias[editingDayIndex].jantarPaciente.prato = e.target.value;
+                      updateCurrentCardapio(updated);
+                    }}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-white"
+                    placeholder="Ex: Arroz, feijão, legumes ao vapor, sopa de legumes, fruta"
+                  />
+                  <div className="flex flex-wrap gap-1 pt-1">
+                    <span className="text-[10px] font-bold text-slate-400 mr-1">Combinações rápidas:</span>
+                    {[
+                      { proteina: 'ISCAS DE CARNE ACEBOLADA', prato: 'Arroz, feijão, legumes ao vapor, sopa de legumes, fruta' },
+                      { proteina: 'PEITO DE FRANGO GRELHADO', prato: 'Arroz, feijão, purê, sopa, fruta' },
+                      { proteina: 'OMELETE DE FORNO COM LEGUMES', prato: 'Arroz, feijão, canja, fruta' }
+                    ].map((j, jIdx) => (
+                      <button
+                        key={jIdx}
+                        type="button"
+                        onClick={() => {
+                          const updated = JSON.parse(JSON.stringify(currentCardapio)) as WeeklyCardapioDoc;
+                          updated.dias[editingDayIndex].jantarPaciente.proteina = j.proteina;
+                          updated.dias[editingDayIndex].jantarPaciente.prato = j.prato;
+                          updateCurrentCardapio(updated);
+                        }}
+                        className="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[9.5px] text-left"
+                      >
+                        {j.proteina}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
 
