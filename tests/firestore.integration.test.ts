@@ -9,27 +9,34 @@ import { SyncConflict, type RecordMap } from '../lib/persistence/core.ts';
 const host = process.env.FIRESTORE_EMULATOR_HOST;
 const enabled = host === '127.0.0.1:8080' && process.env.GCLOUD_PROJECT === 'demo-aprov';
 import { sample } from './fixtures.ts';
-function client(name: string, uid?: string) {
+
+type MockToken = { sub: string; email: string; email_verified: boolean };
+function client(name: string, token?: MockToken) {
   if (!enabled) throw new Error('Integration tests require the local demo-aprov emulator.');
   const app = initializeApp({ projectId: 'demo-aprov', apiKey: 'demo-key', appId: 'demo-app' }, name);
   const db = getFirestore(app);
-  connectFirestoreEmulator(db, '127.0.0.1', 8080, uid ? { mockUserToken: { sub: uid } } : undefined);
+  connectFirestoreEmulator(db, '127.0.0.1', 8080, token ? { mockUserToken: token } : undefined);
   return { app, db };
 }
-test('real Firestore transactions, subscriptions, conflicts, idempotency and security rules', { skip: !enabled, timeout: 45000 }, async () => {
-  const seed = await fetch('http://127.0.0.1:8080/v1/projects/demo-aprov/databases/(default)/documents/aprov_members/editor', {
-    method: 'PATCH', headers: { authorization: 'Bearer owner', 'content-type': 'application/json' },
-    body: JSON.stringify({ fields: { enabled: { booleanValue: true }, role: { stringValue: 'editor' } } })
+
+test('real Firestore transactions, subscriptions, conflicts, idempotency and single-account security rules', { skip: !enabled, timeout: 45000 }, async () => {
+  const authorized = { sub: 'aprov-user', email: 'aprov1hgesm@gmail.com', email_verified: true };
+  const one = client('authorized-one', authorized), two = client('authorized-two', authorized);
+  const anonymous = client('anonymous');
+  const wrongAccount = client('wrong-account', {
+    sub: 'wrong-user', email: 'outro.usuario@gmail.com', email_verified: true
   });
-  assert.equal(seed.ok, true, await seed.text());
-  const one = client('editor-one', 'editor'), two = client('editor-two', 'editor');
-  const denied = client('anonymous');
+  const unverified = client('unverified-account', {
+    sub: 'unverified-user', email: 'aprov1hgesm@gmail.com', email_verified: false
+  });
   const portOne = firestorePort<ReturnType<typeof sample>>(one.db, 'cardapios', validateCardapio);
   const portTwo = firestorePort<ReturnType<typeof sample>>(two.db, 'cardapios', validateCardapio);
   const id = 'integration-' + Date.now(), data = sample(id);
   try {
-    await assert.rejects(getDocs(collection(denied.db, 'aprov_workspaces/hgesm/cardapios')),
-      (error: unknown) => !!error && typeof error === 'object' && 'code' in error && error.code === 'permission-denied');
+    for (const denied of [anonymous, wrongAccount, unverified]) {
+      await assert.rejects(getDocs(collection(denied.db, 'aprov_workspaces/hgesm/cardapios')),
+        (error: unknown) => !!error && typeof error === 'object' && 'code' in error && error.code === 'permission-denied');
+    }
     const attempt = { id: 'create-' + id, changes: [{ id, data, deleted: false, expectedRevision: 0 }] };
     const first = await portOne.commit(attempt);
     assert.equal(first[id].revision, 1);
@@ -51,10 +58,13 @@ test('real Firestore transactions, subscriptions, conflicts, idempotency and sec
     assert.equal(writes.filter(result => result.status === 'fulfilled').length, 1, detail);
     assert.equal(writes.filter(result => result.status === 'rejected' && result.reason instanceof SyncConflict).length, 1, detail);
     await assert.rejects(deleteDoc(doc(one.db, 'aprov_workspaces/hgesm/cardapios/' + id)));
-    await assert.rejects(setDoc(doc(one.db, 'aprov_members/editor'), { enabled: true, role: 'admin' }));
+    await assert.rejects(setDoc(doc(one.db, 'aprov_members/aprov-user'), { enabled: true, role: 'admin' }));
     await assert.rejects(setDoc(doc(one.db, 'aprov_workspaces/hgesm/cardapios/' + id),
       { data, revision: 999, schemaVersion: 1, deleted: false, mutationId: 'invalid', updatedAt: new Date() }));
   } finally {
-    await Promise.all([deleteApp(one.app), deleteApp(two.app), deleteApp(denied.app)]);
+    await Promise.all([
+      deleteApp(one.app), deleteApp(two.app), deleteApp(anonymous.app),
+      deleteApp(wrongAccount.app), deleteApp(unverified.app)
+    ]);
   }
 });
