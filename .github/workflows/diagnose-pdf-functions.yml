@@ -1,0 +1,23 @@
+name: Diagnose PDF export functions
+
+on:
+  push:
+    branches:
+      - diag/pdf-funcionalidades-20260914
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Inventory PDF and print related code
+        run: |
+          echo '=== Imports and export libraries ==='
+          rg -n -C 2 "jsPDF|html2canvas|window\.print|print\(|\.save\(|download|Baixar PDF|Exportar PDF|Gerar PDF" app components || true
+          echo
+          echo '=== Buttons / labels mentioning PDF, imprimir, relatório, escala, cardápio, saque ==='
+          rg -n -C 2 "PDF|Imprimir|Relat[oó]rio|Escala|Card[aá]pio|Saque de Carnes" app/page.tsx components/CardapioSemanal.tsx || true
+          echo
+          echo '=== DOM print sheet ids ==='
+          rg -n -C 2 "print-sheet|print_sheet|printSheet|saque-carnes-print-sheet|cardapio-print-sheet" app components || true
