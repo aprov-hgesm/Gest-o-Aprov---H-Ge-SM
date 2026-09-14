@@ -1,0 +1,63 @@
+name: Apply Saque de Carnes signature removal
+
+on:
+  push:
+    branches:
+      - codex/remover-assinaturas-saque-carnes
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.head_commit.message != 'fix: remove campos de assinatura do Saque de Carnes'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: codex/remover-assinaturas-saque-carnes
+          fetch-depth: 0
+
+      - name: Remove signature fields only from Saque de Carnes document
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('components/CardapioSemanal.tsx')
+          text = path.read_text(encoding='utf-8')
+          pattern = re.compile(
+              r'\n\s*\{/\* Official Signatures Footer \*/\}\n'
+              r'\s*<div className="mt-8 pt-4 border-t border-slate-300">.*?'
+              r'Documento oficial gerado pelo Sistema de Aprovisionamento do Hospital Geral de Santa Maria \(HGeSM\) • Uso interno de controle de estoque e segurança dos alimentos\.\n'
+              r'\s*</div>\n\s*</div>',
+              re.S,
+          )
+          replacement = '''
+                  {/* Document Footer */}
+                  <div className="mt-6 pt-2 border-t border-slate-200 text-center text-[8.5px] text-slate-500">
+                    Documento oficial gerado pelo Sistema de Aprovisionamento do Hospital Geral de Santa Maria (HGeSM) • Uso interno de controle de estoque e segurança dos alimentos.
+                  </div>'''
+          updated, count = pattern.subn(replacement, text, count=1)
+          if count != 1:
+              raise SystemExit(f'Expected exactly one Saque signature footer, found {count}.')
+          path.write_text(updated, encoding='utf-8')
+          PY
+
+      - name: Verify signature footer is gone and operational rubric remains
+        run: |
+          if grep -q 'Official Signatures Footer' components/CardapioSemanal.tsx; then
+            echo 'Signature footer still present' >&2
+            exit 1
+          fi
+          grep -q 'Visto Despensa' components/CardapioSemanal.tsx
+          grep -q 'Document Footer' components/CardapioSemanal.tsx
+
+      - name: Remove temporary workflow and commit patch
+        run: |
+          rm .github/workflows/apply-remove-saque-signatures.yml
+          git config user.name 'Moriark'
+          git config user.email 'marcoa.r.aquino@gmail.com'
+          git add components/CardapioSemanal.tsx .github/workflows/apply-remove-saque-signatures.yml
+          git commit -m 'fix: remove campos de assinatura do Saque de Carnes'
+          git push origin HEAD:codex/remover-assinaturas-saque-carnes
