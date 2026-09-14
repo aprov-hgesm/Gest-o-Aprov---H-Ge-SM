@@ -1,0 +1,62 @@
+name: Diagnose Firebase Auth configuration
+
+on:
+  push:
+    branches:
+      - diag/firebase-auth-config-20260914
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Inspect public Firebase Auth configuration and production origin
+        env:
+          FIREBASE_API_KEY: AIzaSyDil6lmlkUAhP3aZpvkPm0rWzqeizBXzZ0
+        run: |
+          set -euo pipefail
+          echo '=== Production site ==='
+          curl -sS -L -o /tmp/site.html -w 'HTTP %{http_code}\nFinal URL %{url_effective}\n' https://gestao-aprov-hgesm.vercel.app/
+          grep -o -m1 -E '<title>[^<]+' /tmp/site.html || true
+          echo
+
+          echo '=== Firebase v3 project config ==='
+          code=$(curl -sS -o /tmp/firebase-v3.json -w '%{http_code}' "https://www.googleapis.com/identitytoolkit/v3/relyingparty/getProjectConfig?key=${FIREBASE_API_KEY}")
+          echo "HTTP ${code}"
+          python - <<'PY'
+          import json
+          p='/tmp/firebase-v3.json'
+          try:
+              data=json.load(open(p))
+          except Exception:
+              print(open(p).read()[:2000]); raise SystemExit
+          if 'error' in data:
+              print(json.dumps(data['error'], ensure_ascii=False, indent=2)); raise SystemExit
+          print('projectNumber:', data.get('projectNumber'))
+          print('authorizedDomains:', json.dumps(data.get('authorizedDomains', []), ensure_ascii=False))
+          idps=data.get('idpConfig', []) or []
+          print('idpConfig:', json.dumps([{'provider': x.get('provider'), 'enabled': x.get('enabled'), 'clientId_set': bool(x.get('clientId'))} for x in idps], ensure_ascii=False))
+          PY
+          echo
+
+          echo '=== Firebase v1 public project config ==='
+          code=$(curl -sS -o /tmp/firebase-v1.json -w '%{http_code}' "https://identitytoolkit.googleapis.com/v1/projects?key=${FIREBASE_API_KEY}")
+          echo "HTTP ${code}"
+          python - <<'PY'
+          import json
+          p='/tmp/firebase-v1.json'
+          try:
+              data=json.load(open(p))
+          except Exception:
+              print(open(p).read()[:2000]); raise SystemExit
+          if 'error' in data:
+              print(json.dumps(data['error'], ensure_ascii=False, indent=2)); raise SystemExit
+          print('projectId:', data.get('projectId'))
+          print('authorizedDomains:', json.dumps(data.get('authorizedDomains', []), ensure_ascii=False))
+          print('signIn:', json.dumps(data.get('signIn', {}), ensure_ascii=False))
+          PY
+          echo
+
+          echo '=== Firebase Auth handler ==='
+          curl -sS -L -o /tmp/handler.html -w 'HTTP %{http_code}\nFinal URL %{url_effective}\n' https://gestao-aprov-h-ge-sm.firebaseapp.com/__/auth/handler || true
+          head -c 300 /tmp/handler.html || true
+          echo
