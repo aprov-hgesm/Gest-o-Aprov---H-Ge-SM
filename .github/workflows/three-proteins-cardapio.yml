@@ -1,0 +1,42 @@
+name: Apply three protein fields
+on:
+  push:
+    branches:
+      - codex/tres-proteinas-cardapio
+    paths:
+      - .github/workflows/three-proteins-cardapio.yml
+      - scripts/add_three_proteins.py
+permissions:
+  contents: write
+jobs:
+  apply-and-validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: codex/tres-proteinas-cardapio
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.2'
+      - name: Apply focused patch
+        run: python3 scripts/add_three_proteins.py
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+      - name: TypeScript
+        run: bun run typecheck
+      - name: Persistence tests
+        run: bun run test
+      - name: Production build
+        run: bun run build
+        env:
+          NODE_ENV: production
+          NEXT_TELEMETRY_DISABLED: '1'
+      - name: Commit functional changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add components/CardapioSemanal.tsx lib/persistence/validation.ts
+          git diff --cached --quiet && exit 0
+          git commit -m "feat: add three protein fields to daily meal registration"
+          git push origin HEAD:codex/tres-proteinas-cardapio
