@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - diag/pdf-funcionalidades-20260914
+  pull_request:
+    branches:
+      - main
 
 jobs:
   diagnose:
