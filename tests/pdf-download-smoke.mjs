@@ -45,7 +45,7 @@ try {
   page.on('pageerror', error => pageErrors.push(error.message));
   await page.goto('http://127.0.0.1:3000', { waitUntil: 'networkidle' });
   await page.getByRole('button', { name: 'Cardápio Semanal', exact: true }).click();
-  await page.getByText('Cardápio Semanal de Aprovisionamento', { exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'Cardápio Semanal de Aprovisionamento', level: 3 }).waitFor();
   await mkdir('test-results/pdf', { recursive: true });
 
   const cardapioButton = page.getByTitle('Baixar Cardápio Oficial em PDF (A4 Orientação Paisagem)');
@@ -57,7 +57,7 @@ try {
   await page.getByText('Download do PDF (A4 Paisagem) concluído com sucesso!', { exact: true }).waitFor({ timeout: 10000 });
 
   await page.getByRole('button', { name: /Saque de Carnes/ }).first().click();
-  await page.getByText('Mapa de Saque de Carnes da Câmara Fria', { exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'Mapa de Saque de Carnes da Câmara Fria' }).waitFor();
   const saqueButton = page.getByTitle('Baixar Mapa de Saque em PDF A4');
   await saqueButton.waitFor();
   const saqueDownloadPromise = page.waitForEvent('download', { timeout: 45000 });
