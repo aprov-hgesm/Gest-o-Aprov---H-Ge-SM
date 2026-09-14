@@ -1,0 +1,42 @@
+name: Apply editable signatory names
+on:
+  push:
+    branches:
+      - codex/editar-nomes-cabecalho-rodape
+    paths:
+      - .github/workflows/edit-signatory-names.yml
+      - scripts/add_signatory_name_fields.py
+permissions:
+  contents: write
+jobs:
+  apply-and-validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: codex/editar-nomes-cabecalho-rodape
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.2'
+      - name: Apply focused patch
+        run: python3 scripts/add_signatory_name_fields.py
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+      - name: TypeScript
+        run: bun run typecheck
+      - name: Persistence tests
+        run: bun run test
+      - name: Production build
+        run: bun run build
+        env:
+          NODE_ENV: production
+          NEXT_TELEMETRY_DISABLED: '1'
+      - name: Commit functional changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add components/CardapioSemanal.tsx
+          git diff --cached --quiet && exit 0
+          git commit -m "feat: allow editing Fiscal ADM and HGeSM director names"
+          git push origin HEAD:codex/editar-nomes-cabecalho-rodape
