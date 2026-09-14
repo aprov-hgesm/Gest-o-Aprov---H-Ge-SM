@@ -36,6 +36,7 @@ A preferência de semana selecionada permanece local a cada navegador.
 A nova cópia local usa `gestao-aprov:firestore:v1:{colecao}`.
 Ela inclui a versão que foi editada e operações pendentes. A interface só confirma salvamento após resposta do servidor.
 Alterações próximas são agrupadas com uma espera de 700 ms, e operações são serializadas.
+Os serviços de sincronização permanecem ativos ao navegar entre módulos, para que uma troca de aba não interrompa o envio pendente.
 A identificação de cada operação permite recuperar um envio confirmado pelo servidor cuja resposta se perdeu.
 Uma transação não sobrescreve uma revisão modificada por outro dispositivo.
 Se um cadastro de militar mudar enquanto seu formulário estiver aberto, o salvamento é bloqueado e o rascunho do formulário é mantido para comparação.

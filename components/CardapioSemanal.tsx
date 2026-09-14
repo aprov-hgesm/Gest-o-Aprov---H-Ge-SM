@@ -760,7 +760,7 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
       jantarPaciente: JSON.parse(JSON.stringify(sourceDay.jantarPaciente)),
       ceia: sourceDay.ceia,
     };
-    updateCurrentCardapio(updated);
+    if (!updateCurrentCardapio(updated)) return;
     showToast(`Cardápio copiado de ${sourceDay.diaSemanaLabel} com sucesso!`);
   };
 
@@ -789,12 +789,14 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
       },
       ceia: ''
     };
-    updateCurrentCardapio(updated);
+    if (!updateCurrentCardapio(updated)) return;
     showToast(`Cardápio de ${updated.dias[dayIdx].diaSemanaLabel} limpo.`);
   };
 
   const saveCardapios = (list: WeeklyCardapioDoc[], currentId?: string) => {
-    if (cardapioCloud.controller.update(list) && currentId) setSelectedCardapioId(currentId);
+    if (!cardapioCloud.controller.update(list)) return false;
+    if (currentId) setSelectedCardapioId(currentId);
+    return true;
   };
 
   const currentCardapio: WeeklyCardapioDoc = 
@@ -812,13 +814,14 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
     const updatedList = cardapiosList.some(c => c.id === updated.id)
       ? cardapiosList.map(c => c.id === updated.id ? updated : c)
       : [updated, ...cardapiosList];
-    saveCardapios(updatedList, updated.id);
+    return saveCardapios(updatedList, updated.id);
   };
 
   // Advance workflow state
   const handleAdvanceWorkflow = () => {
     const currentStatus = currentCardapio.workflow.status;
     let nextStatus: WorkflowStatus = currentStatus;
+    let message = '';
     const nowStr = new Date().toLocaleDateString('pt-BR');
 
     const updated = JSON.parse(JSON.stringify(currentCardapio)) as WeeklyCardapioDoc;
@@ -828,20 +831,21 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
       updated.workflow.status = nextStatus;
       updated.workflow.conferido.status = 'CONFERIDO';
       updated.workflow.conferido.data = nowStr;
-      showToast('Cardápio marcado como CONFERIDO pelo Chefe Fiscal Adm.');
+      message = 'Cardápio marcado como CONFERIDO pelo Chefe Fiscal Adm.';
     } else if (currentStatus === 'CONFERIDO') {
       nextStatus = 'APROVADO';
       updated.workflow.status = nextStatus;
       updated.workflow.aprovado.status = 'APROVADO';
       updated.workflow.aprovado.data = nowStr;
-      showToast('Cardápio APROVADO pela Diretora HGeSM.');
+      message = 'Cardápio APROVADO pela Diretora HGeSM.';
     } else if (currentStatus === 'APROVADO') {
       nextStatus = 'FINALIZADO';
       updated.workflow.status = nextStatus;
-      showToast('Cardápio FINALIZADO e pronto para publicação oficial.');
+      message = 'Cardápio FINALIZADO e pronto para publicação oficial.';
     }
 
-    updateCurrentCardapio(updated);
+    if (!updateCurrentCardapio(updated)) return;
+    if (message) showToast(message);
   };
 
   const handleReopenWorkflow = () => {
@@ -849,7 +853,7 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
     updated.workflow.status = 'EM_ELABORACAO';
     updated.workflow.conferido.status = 'PENDENTE';
     updated.workflow.aprovado.status = 'PENDENTE';
-    updateCurrentCardapio(updated);
+    if (!updateCurrentCardapio(updated)) return;
     showToast('Cardápio reaberto para edição (Em Elaboração).', 'info');
   };
 
@@ -1115,7 +1119,7 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
     };
 
     const newList = [newDoc, ...cardapiosList];
-    saveCardapios(newList, newDoc.id);
+    if (!saveCardapios(newList, newDoc.id)) return;
     showToast(`Semana duplicada com sucesso para ${formatDdmmyyyy(nextMonIso)} a ${formatDdmmyyyy(nextSunIso)}!`);
   };
 
@@ -1175,7 +1179,7 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
     };
 
     const newList = [newDoc, ...cardapiosList];
-    saveCardapios(newList, newDoc.id);
+    if (!saveCardapios(newList, newDoc.id)) return;
     setIsNewWeekModalOpen(false);
     showToast(`Novo cardápio semanal criado para ${formatDdmmyyyy(newWeekMonday)} a ${formatDdmmyyyy(sunIso)}!`);
   };
@@ -1186,7 +1190,7 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
       if (!cardapioCloud.controller.checkpoint()) return;
       const filtered = cardapiosList.filter(c => c.id !== initialWeeklyCardapio.id);
       const newList = [initialWeeklyCardapio, ...filtered];
-      saveCardapios(newList, initialWeeklyCardapio.id);
+      if (!saveCardapios(newList, initialWeeklyCardapio.id)) return;
       showToast('Modelo oficial HGeSM recarregado com sucesso!');
     }
   };

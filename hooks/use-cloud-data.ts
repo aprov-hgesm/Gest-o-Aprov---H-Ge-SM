@@ -13,6 +13,7 @@ interface CloudOptions<T extends Identified> {
   legacy: () => T[] | null;
 }
 const controllers = new Map<CollectionName, unknown>();
+const startedControllers = new WeakSet<object>();
 
 export function useCloudData<T extends Identified>({ name, initial, validate, legacy }: CloudOptions<T>) {
   const controller = useMemo(() => {
@@ -29,6 +30,8 @@ export function useCloudData<T extends Identified>({ name, initial, validate, le
   }, [name, initial, validate, legacy]);
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getServerSnapshot);
   useEffect(() => {
+    if (startedControllers.has(controller)) return;
+    startedControllers.add(controller);
     controller.start();
     const online = () => controller.retry();
     const beforeUnload = (event: BeforeUnloadEvent) => {
@@ -39,11 +42,9 @@ export function useCloudData<T extends Identified>({ name, initial, validate, le
     };
     window.addEventListener('online', online);
     window.addEventListener('beforeunload', beforeUnload);
-    return () => {
-      window.removeEventListener('online', online);
-      window.removeEventListener('beforeunload', beforeUnload);
-      controller.stop();
-    };
+    // These shared services belong to the browser page, not to a visible tab.
+    // Keep pending saves, reconnects and the unload warning alive after a tab unmounts.
+    // Window listeners disappear with the page; the WeakSet prevents duplicate registration.
   }, [controller]);
   return { state, controller };
 }

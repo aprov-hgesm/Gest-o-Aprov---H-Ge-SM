@@ -77,6 +77,11 @@ try {
   assert.equal(await pageOne.evaluate(() => JSON.parse(localStorage.getItem('gestao-aprov:firestore:v1:roster')).dirty), false);
   await formOne.getByRole('button', { name: 'Cancelar', exact: true }).click();
   await pageOne.getByText('REMOTO', { exact: true }).first().waitFor();
+  await pageOne.getByRole('button', { name: 'Gestão de Escalas', exact: true }).click();
+  await pageOne.locator('tr').filter({ hasText: 'Militar de Teste' }).getByRole('combobox').selectOption('Copeiro de Dia');
+  await confirmed(pageTwo, 'roster', 'principal', 3);
+  assert.equal(await pageTwo.evaluate(() => JSON.parse(localStorage.getItem('gestao-aprov:firestore:v1:roster'))
+    .records[0].militaryList[0].specialty), 'Copeiro de Dia');
 
   await pageOne.getByRole('button', { name: 'Cardápio Semanal', exact: true }).click();
   const cardStatus = pageOne.locator('aside[aria-label="Sincronização: Cardápios semanais"]');
@@ -97,6 +102,8 @@ try {
   });
   // Change actual UI workflow state and verify it on the second independent client.
   await pageOne.getByRole('button', { name: 'Conferir Cardápio', exact: true }).click();
+  // Navigate before the debounce expires: the hidden module must still complete its save.
+  await pageOne.getByRole('button', { name: 'Gerenciar Efetivo', exact: true }).click();
   await pageTwo.waitForFunction(() => {
     const cache = JSON.parse(localStorage.getItem('gestao-aprov:firestore:v1:cardapios') || 'null');
     return cache?.records?.some(item => item.id === 'cardapio-2026-09-21' && item.workflow.status === 'CONFERIDO');
@@ -108,7 +115,7 @@ try {
   await mkdir('test-results', { recursive: true });
   await pageTwo.screenshot({ path: 'test-results/firestore-mobile.png', fullPage: true });
   assert.deepEqual(errors, [], 'Browser runtime errors');
-  console.log('Browser smoke passed: legacy import, two clients, stale-form protection, weekly duplication, workflow changes, reload and mobile rendering.');
+  console.log('Browser smoke passed: legacy import, two clients, stale-form protection, personnel specialty, weekly duplication, background saves, workflow changes, reload and mobile rendering.');
 } catch (error) {
   await mkdir('test-results', { recursive: true });
   for (const [index, page] of pages.entries()) {

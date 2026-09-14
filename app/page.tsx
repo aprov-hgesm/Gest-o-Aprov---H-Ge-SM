@@ -559,7 +559,7 @@ export default function RosterApp() {
     const { day, post } = selectedCell;
 
     const updatedRoster = clean(roster);
-    const updatedMilList = [...militaryList];
+    const updatedMilList = clean(militaryList);
     let logsList = [...changelogs];
 
     if (milId !== 'empty') {
@@ -839,7 +839,7 @@ export default function RosterApp() {
     };
 
     const updatedAbsences = [newAbsence, ...absences];
-    const updatedMilList = [...militaryList];
+    const updatedMilList = clean(militaryList);
 
     // Mark military as Afastado
     const milIdx = updatedMilList.findIndex(m => m.id === mil.id);
@@ -890,7 +890,7 @@ export default function RosterApp() {
     if (!abs) return;
 
     const updatedAbsences = absences.filter(a => a.id !== id);
-    const updatedMilList = [...militaryList];
+    const updatedMilList = clean(militaryList);
 
     // Set military back to Ativo only if no other active absences remain
     const hasOtherAbsences = updatedAbsences.some(a => a.militaryId === abs.militaryId);
@@ -917,7 +917,7 @@ export default function RosterApp() {
 
   // Toggle military specialties
   const handleToggleSpecialty = (milId: string, spec: string) => {
-    const updatedMilList = [...militaryList];
+    const updatedMilList = clean(militaryList);
     const idx = updatedMilList.findIndex(m => m.id === milId);
     if (idx !== -1) {
       updatedMilList[idx].specialty = spec;
