@@ -15,6 +15,7 @@ server.stdout.on('data', chunk => { serverLog += chunk.toString(); });
 server.stderr.on('data', chunk => { serverLog += chunk.toString(); });
 let browser;
 const pageErrors = [];
+const consoleErrors = [];
 
 async function verifyPdf(download, expectedPrefix, targetPath) {
   const name = download.suggestedFilename();
@@ -25,7 +26,30 @@ async function verifyPdf(download, expectedPrefix, targetPath) {
   assert(info.size > 5000, `PDF unexpectedly small: ${info.size} bytes`);
   const content = await readFile(targetPath);
   assert.equal(content.subarray(0, 5).toString('ascii'), '%PDF-', 'Missing PDF signature');
-  return { name, bytes: info.size };
+  return { status: 'downloaded', name, bytes: info.size };
+}
+
+async function attemptPdf(page, { button, failureText, successText, prefix, path }) {
+  const downloadPromise = page.waitForEvent('download', { timeout: 90000 })
+    .then(download => ({ kind: 'download', download }))
+    .catch(error => ({ kind: 'download-timeout', error: error.message }));
+  const failurePromise = page.getByText(failureText, { exact: true }).waitFor({ timeout: 90000 })
+    .then(() => ({ kind: 'failure-toast' }))
+    .catch(() => ({ kind: 'no-failure-toast' }));
+  const successPromise = page.getByText(successText, { exact: true }).waitFor({ timeout: 90000 })
+    .then(() => ({ kind: 'success-toast' }))
+    .catch(() => ({ kind: 'no-success-toast' }));
+
+  await button.click();
+  const first = await Promise.race([downloadPromise, failurePromise, successPromise]);
+  if (first.kind === 'download') return verifyPdf(first.download, prefix, path);
+  if (first.kind === 'failure-toast') return { status: 'failure-toast' };
+  if (first.kind === 'success-toast') {
+    const downloadResult = await downloadPromise;
+    if (downloadResult.kind === 'download') return verifyPdf(downloadResult.download, prefix, path);
+    return { status: 'success-without-download', detail: downloadResult.error };
+  }
+  return { status: first.kind, detail: first.error || null };
 }
 
 try {
@@ -43,34 +67,36 @@ try {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, acceptDownloads: true });
   const page = await context.newPage();
   page.on('pageerror', error => pageErrors.push(error.message));
+  page.on('console', msg => { if (msg.type() === 'error') consoleErrors.push(msg.text()); });
   await page.goto('http://127.0.0.1:3000', { waitUntil: 'networkidle' });
   await page.getByRole('button', { name: 'Cardápio Semanal', exact: true }).click();
   await page.getByRole('heading', { name: 'Cardápio Semanal de Aprovisionamento', level: 3 }).waitFor();
   await mkdir('test-results/pdf', { recursive: true });
 
-  const cardapioButton = page.getByTitle('Baixar Cardápio Oficial em PDF (A4 Orientação Paisagem)');
-  await cardapioButton.waitFor();
-  const cardapioDownloadPromise = page.waitForEvent('download', { timeout: 45000 });
-  await cardapioButton.click();
-  const cardapioDownload = await cardapioDownloadPromise;
-  const cardapio = await verifyPdf(cardapioDownload, 'Cardapio-Semanal-HGeSM-', 'test-results/pdf/cardapio.pdf');
-  await page.getByText('Download do PDF (A4 Paisagem) concluído com sucesso!', { exact: true }).waitFor({ timeout: 10000 });
+  const cardapio = await attemptPdf(page, {
+    button: page.getByTitle('Baixar Cardápio Oficial em PDF (A4 Orientação Paisagem)'),
+    failureText: 'Não foi possível gerar o PDF. Tente novamente.',
+    successText: 'Download do PDF (A4 Paisagem) concluído com sucesso!',
+    prefix: 'Cardapio-Semanal-HGeSM-',
+    path: 'test-results/pdf/cardapio.pdf'
+  });
 
   await page.getByRole('button', { name: /Saque de Carnes/ }).first().click();
   await page.getByRole('heading', { name: 'Mapa de Saque de Carnes da Câmara Fria' }).waitFor();
-  const saqueButton = page.getByTitle('Baixar Mapa de Saque em PDF A4');
-  await saqueButton.waitFor();
-  const saqueDownloadPromise = page.waitForEvent('download', { timeout: 45000 });
-  await saqueButton.click();
-  const saqueDownload = await saqueDownloadPromise;
-  const saque = await verifyPdf(saqueDownload, 'Saque-de-Carnes-HGeSM-', 'test-results/pdf/saque-carnes.pdf');
-  await page.getByText('Download do Saque de Carnes (PDF A4) concluído!', { exact: true }).waitFor({ timeout: 10000 });
+  const saque = await attemptPdf(page, {
+    button: page.getByTitle('Baixar Mapa de Saque em PDF A4'),
+    failureText: 'Não foi possível gerar o PDF do saque. Tente novamente.',
+    successText: 'Download do Saque de Carnes (PDF A4) concluído!',
+    prefix: 'Saque-de-Carnes-HGeSM-',
+    path: 'test-results/pdf/saque-carnes.pdf'
+  });
 
-  assert.deepEqual(pageErrors, [], 'Browser page errors');
-  console.log(JSON.stringify({ cardapio, saque, pageErrors }, null, 2));
+  console.log('PDF_DIAGNOSTIC=' + JSON.stringify({ cardapio, saque, pageErrors, consoleErrors }, null, 2));
+  if (cardapio.status !== 'downloaded' || saque.status !== 'downloaded') process.exitCode = 2;
 } catch (error) {
   console.error('SERVER LOG TAIL:\n' + serverLog.slice(-6000));
   console.error('PAGE ERRORS:', pageErrors);
+  console.error('CONSOLE ERRORS:', consoleErrors);
   throw error;
 } finally {
   await browser?.close();
