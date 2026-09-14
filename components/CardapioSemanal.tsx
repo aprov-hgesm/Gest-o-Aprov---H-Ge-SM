@@ -722,6 +722,8 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
   const [editingDayIndex, setEditingDayIndex] = useState<number | null>(null);
   const [editingFocusMeal, setEditingFocusMeal] = useState<'all' | 'cafe' | 'colacao' | 'almoco' | 'jantar' | 'ceia'>('all');
   const [copySourceDayIndex, setCopySourceDayIndex] = useState<number | ''>('');
+  const [showMealSuggestions, setShowMealSuggestions] = useState(false);
+  const [showMeatShortcuts, setShowMeatShortcuts] = useState(false);
   
   // Institutional config modal
   const [isInstitutionalModalOpen, setIsInstitutionalModalOpen] = useState(false);
@@ -742,6 +744,8 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
     setEditingDayIndex(dayIdx);
     setEditingFocusMeal(mealType);
     setCopySourceDayIndex('');
+    setShowMealSuggestions(false);
+    setShowMeatShortcuts(false);
   };
 
   // Copy meals from another day to current editing day
@@ -1494,6 +1498,105 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
         </div>
       </div>
 
+      {/* Resumo operacional de proteínas: conferência rápida antes do Saque de Carnes */}
+      {(() => {
+        const listaProteinasSemana = gerarListaSaqueCarnes(currentCardapio.dias);
+        const totalKgProteinas = listaProteinasSemana.reduce((total, item) => total + item.quantidadeKg, 0);
+        const diasComSaqueCompleto = currentCardapio.dias.filter(dia =>
+          Boolean(dia.almoco.geral.tipoCarne) && Number(dia.almoco.geral.quantidadeKg) > 0
+        ).length;
+
+        return (
+          <div className="no-print bg-white border border-slate-200 rounded-xl p-4 shadow-2xs">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-900">
+                  <Beef className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-black text-slate-900">Proteínas da semana</h4>
+                  <p className="text-[11px] text-slate-500">
+                    Conferência operacional de preparação, corte, quantidade e data de retirada para degelo.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 text-[10px] font-bold">
+                <span className={cn(
+                  "px-2 py-1 rounded-full border",
+                  diasComSaqueCompleto === currentCardapio.dias.length
+                    ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                    : "bg-amber-50 text-amber-900 border-amber-200"
+                )}>
+                  {diasComSaqueCompleto}/{currentCardapio.dias.length} dias completos
+                </span>
+                <span className="px-2 py-1 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
+                  {totalKgProteinas.toFixed(1)} kg programados
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setIsSaqueCarnesModalOpen(true)}
+                  className="px-2.5 py-1 rounded-lg bg-amber-800 hover:bg-amber-900 text-white transition-colors"
+                >
+                  Abrir Saque de Carnes
+                </button>
+              </div>
+            </div>
+
+            <div className="flex gap-2 overflow-x-auto pb-1">
+              {currentCardapio.dias.map((dia, idx) => {
+                const tipo = dia.almoco.geral.tipoCarne;
+                const quantidade = Number(dia.almoco.geral.quantidadeKg) || 0;
+                const regra = tipo ? (REGRAS_DESCONGELAMENTO[tipo] || { diasAntecedencia: 2 }) : null;
+                const calc = regra ? calcularDataSaque(dia.date, regra.diasAntecedencia) : null;
+                const adicionais = dia.almoco.geral.carnesAdicionais || [];
+                const completo = Boolean(tipo && quantidade > 0);
+
+                return (
+                  <button
+                    key={`protein-summary-${dia.date}`}
+                    type="button"
+                    onClick={() => handleOpenEditMeal(idx, 'almoco')}
+                    className={cn(
+                      "min-w-[170px] flex-1 text-left rounded-lg border p-2.5 transition-colors",
+                      completo
+                        ? "bg-white border-slate-200 hover:border-amber-300 hover:bg-amber-50/30"
+                        : "bg-amber-50/40 border-amber-200 hover:bg-amber-50"
+                    )}
+                    title={`Editar proteína e saque de ${dia.diaSemanaLabel}`}
+                  >
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <span className="text-[10px] font-black text-slate-700">{dia.diaSemanaLabel}</span>
+                      <span className="text-[9px] font-medium text-slate-400">{formatDdmmyyyy(dia.date)}</span>
+                    </div>
+                    <div className="text-[11px] font-black text-slate-950 uppercase leading-tight min-h-[28px] line-clamp-2">
+                      {dia.almoco.geral.proteina || 'Proteína não definida'}
+                    </div>
+                    <div className={cn(
+                      "mt-2 flex items-center gap-1 text-[10px] font-bold",
+                      completo ? "text-amber-950" : "text-amber-800"
+                    )}>
+                      <Beef className="w-3 h-3 shrink-0" />
+                      <span className="truncate">
+                        {tipo || 'Corte pendente'} {quantidade > 0 ? `• ${quantidade} kg` : '• quantidade pendente'}
+                      </span>
+                    </div>
+                    <div className="mt-1 flex items-center gap-1 text-[9.5px] text-slate-500 font-semibold">
+                      <Snowflake className="w-3 h-3 shrink-0 text-blue-600" />
+                      <span>{calc ? `Retirar ${calc.dataSaqueFormatada} • ${regra?.diasAntecedencia}d antes` : 'Saque ainda não calculado'}</span>
+                    </div>
+                    {adicionais.length > 0 && (
+                      <div className="mt-1.5 text-[9px] font-bold text-amber-800 truncate">
+                        + {adicionais.map(item => `${item.tipoCarne} (${item.quantidadeKg} kg)`).join(' • ')}
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* ------------------------------------------------------------------- */}
       {/* VIEW 1: STRUCTURED EDITOR BY DAY                                    */}
       {/* ------------------------------------------------------------------- */}
@@ -1548,7 +1651,7 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
                     </div>
 
                     <button
-                      onClick={() => setEditingDayIndex(idx)}
+                      onClick={() => handleOpenEditMeal(idx, 'all')}
                       className="px-2.5 py-1 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-md text-xs font-bold transition-colors flex items-center gap-1 shadow-2xs"
                     >
                       <Edit3 className="w-3 h-3 text-emerald-800" />
@@ -1997,7 +2100,7 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
           <motion.div 
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col"
+            className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-3xl w-full max-h-[92vh] overflow-hidden flex flex-col"
           >
             {/* Modal Header */}
             <div className="px-6 py-4 bg-slate-100 border-b border-slate-200 flex justify-between items-center shrink-0">
@@ -2067,11 +2170,39 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
               </button>
             </div>
 
+            {/* Refeição em foco: reduz a densidade do formulário sem alterar os dados */}
+            <div className="px-6 py-2.5 bg-white border-b border-slate-200 shrink-0">
+              <div className="flex items-center gap-1 overflow-x-auto">
+                {([
+                  ['all', 'Visão geral'],
+                  ['cafe', 'Café / Ceia'],
+                  ['colacao', 'Colação'],
+                  ['almoco', 'Almoço'],
+                  ['jantar', 'Jantar paciente'],
+                  ['ceia', 'Ceia']
+                ] as const).map(([mealId, label]) => (
+                  <button
+                    key={mealId}
+                    type="button"
+                    onClick={() => setEditingFocusMeal(mealId)}
+                    className={cn(
+                      "whitespace-nowrap px-3 py-1.5 rounded-lg text-[11px] font-bold border transition-colors",
+                      editingFocusMeal === mealId
+                        ? "bg-[#1e382b] text-white border-[#1e382b]"
+                        : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* Modal Form Scrollable */}
             <div className="p-6 overflow-y-auto space-y-5 text-xs">
               
               {/* Event & Holiday flags */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+              <div className={cn("grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-50 p-3.5 rounded-xl border border-slate-200", editingFocusMeal !== 'all' && "hidden")}>
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
                     Evento Especial
@@ -2126,7 +2257,8 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
               {/* Refeição 1: Café da Manhã / Ceia */}
               <div className={cn(
                 "p-3 rounded-xl border transition-all space-y-1.5",
-                editingFocusMeal === 'cafe' ? "bg-emerald-50/50 border-emerald-400 ring-2 ring-emerald-200" : "bg-white border-slate-200"
+                editingFocusMeal === 'cafe' ? "bg-emerald-50/50 border-emerald-400 ring-2 ring-emerald-200" : "bg-white border-slate-200",
+                editingFocusMeal !== 'all' && editingFocusMeal !== 'cafe' && "hidden"
               )}>
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold text-slate-800 block">
@@ -2152,7 +2284,8 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
               {/* Refeição 2: Colação PACIENTE */}
               <div className={cn(
                 "p-3 rounded-xl border transition-all space-y-1.5",
-                editingFocusMeal === 'colacao' ? "bg-emerald-50/50 border-emerald-400 ring-2 ring-emerald-200" : "bg-white border-slate-200"
+                editingFocusMeal === 'colacao' ? "bg-emerald-50/50 border-emerald-400 ring-2 ring-emerald-200" : "bg-white border-slate-200",
+                editingFocusMeal !== 'all' && editingFocusMeal !== 'colacao' && "hidden"
               )}>
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold text-slate-800 block">
@@ -2178,7 +2311,8 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
               {/* Refeição 3: ALMOÇO (ESTRUTURADO) */}
               <div className={cn(
                 "p-4 rounded-xl space-y-3.5 border transition-all",
-                editingFocusMeal === 'almoco' ? "bg-emerald-50/70 border-emerald-500 ring-2 ring-emerald-300" : "bg-emerald-50/40 border-emerald-200/80"
+                editingFocusMeal === 'almoco' ? "bg-emerald-50/70 border-emerald-500 ring-2 ring-emerald-300" : "bg-emerald-50/40 border-emerald-200/80",
+                editingFocusMeal !== 'all' && editingFocusMeal !== 'almoco' && "hidden"
               )}>
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-black text-emerald-950 uppercase tracking-wider flex items-center gap-1.5">
@@ -2254,28 +2388,40 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
                     className="w-full px-3 py-2 border-2 border-emerald-600 rounded-lg text-xs font-bold bg-white text-emerald-950 focus:ring-2 focus:ring-emerald-800"
                     placeholder="Ex: LOMBO A CALIFÓRNIA, COXA E SOBRECOXA, PEIXE..."
                   />
-                  {/* Preset chips for Proteínas */}
-                  <div className="flex flex-wrap items-center gap-1 pt-1">
-                    <span className="text-[10px] font-bold text-slate-400 mr-1">Sugestões de Preparação:</span>
-                    {PRESET_PROTEINAS.map(p => (
-                      <button
-                        key={p}
-                        type="button"
-                        onClick={() => {
-                          const updated = JSON.parse(JSON.stringify(currentCardapio)) as WeeklyCardapioDoc;
-                          updated.dias[editingDayIndex].almoco.geral.proteina = p;
-                          updateCurrentCardapio(updated);
-                        }}
-                        className="px-2 py-0.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 rounded text-[10px] font-bold transition-colors"
-                      >
-                        {p}
-                      </button>
-                    ))}
+                  {/* Sugestões secundárias ficam recolhidas para manter o foco no cadastro */}
+                  <div className="pt-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setShowMealSuggestions(value => !value)}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-slate-200 bg-slate-50 hover:bg-slate-100 text-[10px] font-bold text-slate-600 transition-colors"
+                    >
+                      <Sparkles className="w-3 h-3 text-emerald-700" />
+                      <span>Sugestões e preenchimento rápido</span>
+                      <span className="text-slate-400">{showMealSuggestions ? 'Ocultar' : 'Mostrar'}</span>
+                    </button>
+                    {showMealSuggestions && (
+                      <div className="flex flex-wrap items-center gap-1.5 mt-2 p-2.5 rounded-lg bg-slate-50 border border-slate-200">
+                        {PRESET_PROTEINAS.map(p => (
+                          <button
+                            key={p}
+                            type="button"
+                            onClick={() => {
+                              const updated = JSON.parse(JSON.stringify(currentCardapio)) as WeeklyCardapioDoc;
+                              updated.dias[editingDayIndex].almoco.geral.proteina = p;
+                              updateCurrentCardapio(updated);
+                            }}
+                            className="px-2 py-1 bg-white hover:bg-emerald-50 border border-slate-200 hover:border-emerald-300 text-emerald-900 rounded-md text-[10px] font-bold transition-colors"
+                          >
+                            {p}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
 
                 {/* Tipo da Carne e Quantidade em Kg (Logo abaixo da Proteína Principal - Apenas Detalhamento Interno) */}
-                <div className="space-y-3 p-3.5 rounded-xl bg-amber-50/90 border-2 border-amber-300 shadow-2xs">
+                <div className="space-y-3 p-4 rounded-xl bg-amber-50/60 border border-amber-300">
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <div className="p-1.5 bg-amber-200/80 rounded-lg text-amber-900">
@@ -2283,15 +2429,15 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
                       </div>
                       <div>
                         <label className="text-xs font-black text-amber-950 uppercase tracking-wide block">
-                          Tipo da Carne &amp; Quantidade (Saque de Carnes) *
+                          Proteína / Saque de Carnes *
                         </label>
                         <p className="text-[10px] text-amber-800 font-medium">
-                          Preenchimento obrigatório para cálculo da data de saque e descongelamento. <strong className="font-bold">Esta informação não consta na folha do cardápio A4</strong>, apenas no documento de Saque de Carnes.
+                          Informe a matéria-prima e a quantidade que serão retiradas da câmara fria. <strong className="font-bold">Esses dados alimentam o Saque de Carnes e não aparecem no cardápio A4.</strong>
                         </p>
                       </div>
                     </div>
                     <span className="shrink-0 text-[9px] font-bold text-amber-900 bg-amber-200/90 border border-amber-300 px-2 py-0.5 rounded-full uppercase">
-                      Detalhamento Interno
+                      Operacional
                     </span>
                   </div>
 
@@ -2347,60 +2493,70 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
                     </div>
                   </div>
 
-                  {/* Atalhos de Kg rápidos */}
-                  <div className="flex flex-wrap items-center gap-1">
-                    <span className="text-[9.5px] font-bold text-amber-900 mr-1">Atalhos Kg:</span>
-                    {[25, 35, 40, 45, 50, 60, 70, 80].map(kg => (
-                      <button
-                        key={kg}
-                        type="button"
-                        onClick={() => {
-                          const updated = JSON.parse(JSON.stringify(currentCardapio)) as WeeklyCardapioDoc;
-                          updated.dias[editingDayIndex].almoco.geral.quantidadeKg = kg;
-                          updateCurrentCardapio(updated);
-                        }}
-                        className={cn(
-                          "px-1.5 py-0.5 rounded text-[10px] font-bold transition-all border",
-                          Number(currentCardapio.dias[editingDayIndex].almoco.geral.quantidadeKg) === kg
-                            ? "bg-amber-800 text-white border-amber-900 shadow-2xs"
-                            : "bg-white text-amber-900 border-amber-300 hover:bg-amber-100"
-                        )}
-                      >
-                        {kg} kg
-                      </button>
-                    ))}
-                  </div>
+                  {/* Atalhos secundários de corte e quantidade */}
+                  <div className="pt-0.5">
+                    <button
+                      type="button"
+                      onClick={() => setShowMeatShortcuts(value => !value)}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-amber-300 bg-white hover:bg-amber-100 text-[10px] font-bold text-amber-900 transition-colors"
+                    >
+                      <Scale className="w-3 h-3" />
+                      <span>Atalhos de corte e quantidade</span>
+                      <span className="text-amber-600">{showMeatShortcuts ? 'Ocultar' : 'Mostrar'}</span>
+                    </button>
 
-                  {/* Chips interativos para seleção rápida com 1 clique */}
-                  <div className="space-y-1 pt-1">
-                    <span className="text-[9.5px] font-black text-amber-900 uppercase block tracking-wider">
-                      Clique para Selecionar o Corte:
-                    </span>
-                    <div className="flex flex-wrap gap-1">
-                      {TIPOS_CARNE_OPCOES.map(opcao => {
-                        const isSelected = currentCardapio.dias[editingDayIndex].almoco.geral.tipoCarne === opcao;
-                        const regra = REGRAS_DESCONGELAMENTO[opcao];
-                        return (
-                          <button
-                            key={opcao}
-                            type="button"
-                            onClick={() => {
-                              const updated = JSON.parse(JSON.stringify(currentCardapio)) as WeeklyCardapioDoc;
-                              updated.dias[editingDayIndex].almoco.geral.tipoCarne = opcao;
-                              updateCurrentCardapio(updated);
-                            }}
-                            className={cn(
-                              "px-2 py-0.5 rounded text-[10px] font-extrabold transition-all",
-                              isSelected
-                                ? "bg-amber-800 text-white shadow-xs scale-102"
-                                : "bg-white border border-amber-300 hover:bg-amber-100 text-amber-950"
-                            )}
-                          >
-                            {opcao} {regra ? `(${regra.diasAntecedencia}d)` : ''} {isSelected && '✓'}
-                          </button>
-                        );
-                      })}
-                    </div>
+                    {showMeatShortcuts && (
+                      <div className="mt-2 space-y-2 rounded-lg border border-amber-200 bg-white/80 p-2.5">
+                        <div className="flex flex-wrap items-center gap-1">
+                          <span className="text-[9.5px] font-bold text-amber-900 mr-1">Quantidade:</span>
+                          {[25, 35, 40, 45, 50, 60, 70, 80].map(kg => (
+                            <button
+                              key={kg}
+                              type="button"
+                              onClick={() => {
+                                const updated = JSON.parse(JSON.stringify(currentCardapio)) as WeeklyCardapioDoc;
+                                updated.dias[editingDayIndex].almoco.geral.quantidadeKg = kg;
+                                updateCurrentCardapio(updated);
+                              }}
+                              className={cn(
+                                "px-1.5 py-0.5 rounded text-[10px] font-bold transition-all border",
+                                Number(currentCardapio.dias[editingDayIndex].almoco.geral.quantidadeKg) === kg
+                                  ? "bg-amber-800 text-white border-amber-900"
+                                  : "bg-white text-amber-900 border-amber-300 hover:bg-amber-100"
+                              )}
+                            >
+                              {kg} kg
+                            </button>
+                          ))}
+                        </div>
+
+                        <div className="flex flex-wrap gap-1">
+                          {TIPOS_CARNE_OPCOES.map(opcao => {
+                            const isSelected = currentCardapio.dias[editingDayIndex].almoco.geral.tipoCarne === opcao;
+                            const regra = REGRAS_DESCONGELAMENTO[opcao];
+                            return (
+                              <button
+                                key={opcao}
+                                type="button"
+                                onClick={() => {
+                                  const updated = JSON.parse(JSON.stringify(currentCardapio)) as WeeklyCardapioDoc;
+                                  updated.dias[editingDayIndex].almoco.geral.tipoCarne = opcao;
+                                  updateCurrentCardapio(updated);
+                                }}
+                                className={cn(
+                                  "px-2 py-0.5 rounded text-[10px] font-extrabold transition-all border",
+                                  isSelected
+                                    ? "bg-amber-800 text-white border-amber-900"
+                                    : "bg-white border-amber-300 hover:bg-amber-100 text-amber-950"
+                                )}
+                              >
+                                {opcao} {regra ? `(${regra.diasAntecedencia}d)` : ''} {isSelected && '✓'}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* Caixa de Cálculo do Saque e Descongelamento do Dia */}
@@ -2675,7 +2831,8 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
               {/* Refeição 5: Jantar PACIENTE */}
               <div className={cn(
                 "p-3 rounded-xl border transition-all space-y-1.5",
-                editingFocusMeal === 'jantar' ? "bg-emerald-50/50 border-emerald-400 ring-2 ring-emerald-200" : "bg-white border-slate-200"
+                editingFocusMeal === 'jantar' ? "bg-emerald-50/50 border-emerald-400 ring-2 ring-emerald-200" : "bg-white border-slate-200",
+                editingFocusMeal !== 'all' && editingFocusMeal !== 'jantar' && "hidden"
               )}>
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold text-slate-800 block">
@@ -2723,7 +2880,8 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
               {/* Refeição 7: CEIA */}
               <div className={cn(
                 "p-3 rounded-xl border transition-all space-y-1.5",
-                editingFocusMeal === 'ceia' ? "bg-emerald-50/50 border-emerald-400 ring-2 ring-emerald-200" : "bg-white border-slate-200"
+                editingFocusMeal === 'ceia' ? "bg-emerald-50/50 border-emerald-400 ring-2 ring-emerald-200" : "bg-white border-slate-200",
+                editingFocusMeal !== 'all' && editingFocusMeal !== 'ceia' && "hidden"
               )}>
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold text-slate-800 block">
@@ -3227,13 +3385,13 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
                         <thead>
                           <tr className="bg-slate-200 text-black border-b-2 border-black">
                             <th className="border border-black px-2 py-1.5 text-center font-black uppercase text-[10px] w-28">
-                              Data do Saque
+                              RETIRAR EM
                             </th>
                             <th className="border border-black px-2 py-1.5 text-left font-black uppercase text-[10px]">
-                              Corte / Matéria-Prima
+                              CARNE / CORTE
                             </th>
                             <th className="border border-black px-2 py-1.5 text-center font-black uppercase text-[10px] w-20">
-                              Qtd (Kg)
+                              QUANTIDADE
                             </th>
                             <th className="border border-black px-2 py-1.5 text-center font-black uppercase text-[10px] w-24">
                               Antecedência
@@ -3265,7 +3423,7 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
                                 >
                                   {/* Data do Saque */}
                                   <td className="border border-black px-2 py-1.5 text-center">
-                                    <strong className="block text-black font-black text-[11px]">
+                                    <strong className="block text-black font-black text-[13px]">
                                       {item.dataSaqueFormatada}
                                     </strong>
                                     <span className={cn(
@@ -3278,7 +3436,7 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
 
                                   {/* Corte */}
                                   <td className="border border-black px-2 py-1.5">
-                                    <strong className="text-black font-black text-[11px] block">
+                                    <strong className="text-black font-black text-[13px] block">
                                       {item.tipoCarne}
                                     </strong>
                                     {item.observacao && (
@@ -3289,7 +3447,7 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
                                   </td>
 
                                   {/* Qtd em Kg */}
-                                  <td className="border border-black px-2 py-1.5 text-center font-black text-black text-[11px]">
+                                  <td className="border border-black px-2 py-1.5 text-center font-black text-black text-[13px]">
                                     {item.quantidadeKg > 0 ? (
                                       <span>{item.quantidadeKg.toFixed(1)} kg</span>
                                     ) : (
