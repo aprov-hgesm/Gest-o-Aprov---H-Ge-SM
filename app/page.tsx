@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { 
   Calendar, 
   CalendarPlus,
@@ -31,6 +31,7 @@ import { cn } from '@/lib/utils';
 import CardapioSemanal from '@/components/CardapioSemanal';
 import SyncStatus from '@/components/SyncStatus';
 import { useCloudData } from '@/hooks/use-cloud-data';
+import { clean, equal } from '@/lib/persistence/core';
 import { validateRoster } from '@/lib/persistence/validation';
 
 // ==========================================
@@ -431,10 +432,8 @@ export default function RosterApp() {
   // ==========================================
   // STATE MANAGEMENT
   // ==========================================
-  const [militaryList, setMilitaryList] = useState<Military[]>(initialMilitary);
-  const [absences, setAbsences] = useState<Absence[]>(initialAbsences);
-  const [roster, setRoster] = useState<WeekRoster>(initialRoster);
-  const [changelogs, setChangelogs] = useState<LogEntry[]>(initialLogs);
+  const { militaryList, absences, roster, changelogs, customHolidays } =
+    rosterCloud.state.records[0] ?? initialRosterDocuments[0];
   const [activeTab, setActiveTab] = useState<'dashboard' | 'efetivo' | 'afastamentos' | 'cardapio'>('dashboard');
   
   // Sidebar state for mobile
@@ -452,7 +451,6 @@ export default function RosterApp() {
   // ----------------------------------------------------
   // TAB 1: GESTÃO DE ESCALAS (Independent State)
   // ----------------------------------------------------
-  const [customHolidays, setCustomHolidays] = useState<HolidayDate[]>(initialHolidays);
   const [isHolidayModalOpen, setIsHolidayModalOpen] = useState(false);
   const [newHolidayDate, setNewHolidayDate] = useState('2026-09-18');
   const [newHolidayName, setNewHolidayName] = useState('');
@@ -491,6 +489,7 @@ export default function RosterApp() {
   
   // Military CRUD form states
   const [editingMil, setEditingMil] = useState<Military | null>(null);
+  const [editingMilOriginal, setEditingMilOriginal] = useState<Military | null>(null);
   const [newMilRank, setNewMilRank] = useState('Sd');
   const [newMilName, setNewMilName] = useState('');
   const [newMilFullName, setNewMilFullName] = useState('');
@@ -504,16 +503,6 @@ export default function RosterApp() {
   // Notification Toast state
   const [toast, setToast] = useState<{ show: boolean; msg: string; type: 'success' | 'info' }>({ show: false, msg: '', type: 'success' });
 
-  const cloudRoster = rosterCloud.state.records[0];
-  useEffect(() => {
-    if (!cloudRoster) return;
-    setMilitaryList(cloudRoster.militaryList);
-    setAbsences(cloudRoster.absences);
-    setRoster(cloudRoster.roster);
-    setChangelogs(cloudRoster.changelogs);
-    setCustomHolidays(cloudRoster.customHolidays);
-  }, [cloudRoster]);
-
   // One versioned document keeps personnel, absences and assignments consistent.
   const saveState = (
     newMil: Military[],
@@ -522,7 +511,7 @@ export default function RosterApp() {
     newLogs: LogEntry[],
     newHolidays: HolidayDate[] = customHolidays
   ) => {
-    rosterCloud.controller.update([{
+    return rosterCloud.controller.update([{
       id: 'principal', militaryList: newMil, absences: newAbs,
       roster: newRos, changelogs: newLogs, customHolidays: newHolidays
     }]);
@@ -542,7 +531,6 @@ export default function RosterApp() {
   const addLog = (text: string, currentLogsList?: LogEntry[]) => {
     const newEntry: LogEntry = { time: formatTimeNow(), text };
     const updated = [newEntry, ...(currentLogsList || changelogs)];
-    setChangelogs(updated);
     return updated;
   };
 
@@ -570,7 +558,7 @@ export default function RosterApp() {
     if (!selectedCell) return;
     const { day, post } = selectedCell;
 
-    const updatedRoster = { ...roster };
+    const updatedRoster = clean(roster);
     const updatedMilList = [...militaryList];
     let logsList = [...changelogs];
 
@@ -637,10 +625,7 @@ export default function RosterApp() {
         logsList = addLog(`${mil.rank}. ${mil.name} escalado manualmente (${typeLabel}) para ${post} em ${day}.`, logsList);
       }
     }
-
-    setRoster(updatedRoster);
-    setMilitaryList(updatedMilList);
-    saveState(updatedMilList, absences, updatedRoster, logsList, customHolidays);
+    if (!saveState(updatedMilList, absences, updatedRoster, logsList, customHolidays)) return;
     setIsAssigning(false);
     setSelectedCell(null);
     setModalSearch('');
@@ -654,9 +639,7 @@ export default function RosterApp() {
     const emptyRoster = createEmptyRoster(daysToShow);
     const resetMilList = militaryList.map(mil => ({ ...mil, dutyCount: 0 }));
     const resetLogs = addLog('Todas as designações da escala foram desmarcadas para operação manual.', changelogs);
-    setRoster(emptyRoster);
-    setMilitaryList(resetMilList);
-    saveState(resetMilList, absences, emptyRoster, resetLogs, customHolidays);
+    if (!saveState(resetMilList, absences, emptyRoster, resetLogs, customHolidays)) return;
     showToast('Escala limpa com sucesso! Pronta para alocação manual.', 'success');
   };
 
@@ -682,9 +665,8 @@ export default function RosterApp() {
     };
 
     const updated = [...militaryList, newMil];
-    setMilitaryList(updated);
     let logsList = addLog(`Novo militar adicionado: ${newMilRank}. ${newMilName} (${newMilSpecialty}${newMilSpecialtySecondary !== 'Nenhuma' ? ` / ${newMilSpecialtySecondary}` : ''}).`);
-    saveState(updated, absences, roster, logsList);
+    if (!saveState(updated, absences, roster, logsList)) return;
 
     // Reset fields
     setNewMilName('');
@@ -703,7 +685,7 @@ export default function RosterApp() {
       const updatedAbs = absences.filter(a => a.militaryId !== id);
 
       // Clean slots in roster
-      const updatedRoster = { ...roster };
+      const updatedRoster = clean(roster);
       Object.keys(updatedRoster).forEach(day => {
         Object.keys(updatedRoster[day]).forEach(post => {
           const cell = updatedRoster[day][post];
@@ -714,16 +696,17 @@ export default function RosterApp() {
       });
 
       let logsList = addLog(`Militar excluído do sistema: ${target.rank}. ${target.name}.`);
-      setMilitaryList(updatedMil);
-      setAbsences(updatedAbs);
-      setRoster(updatedRoster);
-      saveState(updatedMil, updatedAbs, updatedRoster, logsList);
+      if (!saveState(updatedMil, updatedAbs, updatedRoster, logsList)) return;
       showToast(`Militar ${target.name} removido com sucesso.`);
     }
   };
 
   // CRUD: Save edit of military personnel and synchronize with roster and absences
   const handleSaveEditMilitary = (mil: Military) => {
+    if (!editingMilOriginal || !equal(militaryList.find(item => item.id === mil.id), editingMilOriginal)) {
+      showToast('Este cadastro mudou em outro dispositivo. Seu formulário foi preservado; copie as alterações e reabra o cadastro atualizado.', 'info');
+      return;
+    }
     const updated = militaryList.map(m => m.id === mil.id ? mil : m);
     
     // Propagate military name and rank changes to absences
@@ -734,7 +717,7 @@ export default function RosterApp() {
     );
 
     // Propagate military name and rank changes to roster
-    const updatedRoster = { ...roster };
+    const updatedRoster = clean(roster);
     Object.keys(updatedRoster).forEach(day => {
       Object.keys(updatedRoster[day]).forEach(post => {
         const cell = updatedRoster[day][post];
@@ -748,12 +731,8 @@ export default function RosterApp() {
       });
     });
 
-    setMilitaryList(updated);
-    setAbsences(updatedAbs);
-    setRoster(updatedRoster);
-
     let logsList = addLog(`Cadastro do militar ${mil.rank}. ${mil.name} atualizado.`);
-    saveState(updated, updatedAbs, updatedRoster, logsList);
+    if (!saveState(updated, updatedAbs, updatedRoster, logsList)) return;
     setEditingMil(null);
     showToast('Dados e vínculos atualizados com sucesso!');
   };
@@ -763,7 +742,7 @@ export default function RosterApp() {
     if (window.confirm('Redefinir militares, escalas, afastamentos e feriados para o modelo inicial? A alteração será sincronizada com os demais dispositivos.')) {
       if (!rosterCloud.controller.checkpoint()) return;
       const freshRoster = createEmptyRoster();
-      saveState(initialMilitary, initialAbsences, freshRoster, initialLogs, initialHolidays);
+      if (!saveState(initialMilitary, initialAbsences, freshRoster, initialLogs, initialHolidays)) return;
       showToast('Redefinição registrada.');
     }
   };
@@ -790,10 +769,9 @@ export default function RosterApp() {
     };
 
     const updatedHolidays = [...customHolidays, holidayItem].sort((a, b) => a.date.localeCompare(b.date));
-    setCustomHolidays(updatedHolidays);
 
     // Create empty slots for this holiday in the roster if not already present
-    const updatedRoster = { ...roster };
+    const updatedRoster = clean(roster);
     if (!updatedRoster[dayKey]) {
       updatedRoster[dayKey] = {
         'Cozinheiro de Dia': null,
@@ -802,11 +780,8 @@ export default function RosterApp() {
         'Auxiliar do Copeiro de Dia': null
       };
     }
-
-    setRoster(updatedRoster);
     const updatedLogs = addLog(`Feriado cadastrado: ${dayKey} (${holidayItem.name}). Adicionado à escala operacional.`);
-    setChangelogs(updatedLogs);
-    saveState(militaryList, absences, updatedRoster, updatedLogs, updatedHolidays);
+    if (!saveState(militaryList, absences, updatedRoster, updatedLogs, updatedHolidays)) return;
 
     setNewHolidayName('');
     setIsHolidayModalOpen(false);
@@ -821,22 +796,18 @@ export default function RosterApp() {
 
     if (window.confirm(`Deseja remover o feriado "${target.name}" (${dayKey}) da escala?`)) {
       const updatedHolidays = customHolidays.filter(h => h.date !== isoDate);
-      setCustomHolidays(updatedHolidays);
 
       // If it's not a weekend day (Sat/Sun), remove the day column from roster
       const [y, m, d] = isoDate.split('-').map(Number);
       const dateObj = new Date(y, m - 1, d);
       const isWeekend = dateObj.getDay() === 0 || dateObj.getDay() === 6;
 
-      const updatedRoster = { ...roster };
+      const updatedRoster = clean(roster);
       if (!isWeekend) {
         delete updatedRoster[dayKey];
       }
-
-      setRoster(updatedRoster);
       const updatedLogs = addLog(`Feriado ${dayKey} (${target.name}) removido da escala.`);
-      setChangelogs(updatedLogs);
-      saveState(militaryList, absences, updatedRoster, updatedLogs, updatedHolidays);
+      if (!saveState(militaryList, absences, updatedRoster, updatedLogs, updatedHolidays)) return;
       showToast(`Feriado ${dayKey} removido da escala.`);
     }
   };
@@ -877,7 +848,7 @@ export default function RosterApp() {
     }
 
     // Auto update roster if checked: replace their active slots with "Dispensa"
-    const updatedRoster = { ...roster };
+    const updatedRoster = clean(roster);
     if (absenceAutoUpdate) {
       Object.keys(updatedRoster).forEach(day => {
         const dayISO = ddmmyyyyToIso(day);
@@ -905,11 +876,7 @@ export default function RosterApp() {
     }
 
     let logsList = addLog(`Registrado afastamento de ${mil.rank}. ${mil.name} (${absenceType}).`);
-
-    setAbsences(updatedAbsences);
-    setMilitaryList(updatedMilList);
-    setRoster(updatedRoster);
-    saveState(updatedMilList, updatedAbsences, updatedRoster, logsList, customHolidays);
+    if (!saveState(updatedMilList, updatedAbsences, updatedRoster, logsList, customHolidays)) return;
 
     // Reset Form
     setAbsentMilId('');
@@ -933,7 +900,7 @@ export default function RosterApp() {
     }
 
     // Clean dispensa entries in roster
-    const updatedRoster = { ...roster };
+    const updatedRoster = clean(roster);
     Object.keys(updatedRoster).forEach(day => {
       Object.keys(updatedRoster[day]).forEach(post => {
         const cell = updatedRoster[day][post];
@@ -944,11 +911,7 @@ export default function RosterApp() {
     });
 
     let logsList = addLog(`Retorno de afastamento homologado para ${abs.rank}. ${abs.militaryName}.`);
-
-    setAbsences(updatedAbsences);
-    setMilitaryList(updatedMilList);
-    setRoster(updatedRoster);
-    saveState(updatedMilList, updatedAbsences, updatedRoster, logsList);
+    if (!saveState(updatedMilList, updatedAbsences, updatedRoster, logsList)) return;
     showToast(`Militar ${abs.militaryName} retornou ao serviço ativo.`);
   };
 
@@ -958,8 +921,7 @@ export default function RosterApp() {
     const idx = updatedMilList.findIndex(m => m.id === milId);
     if (idx !== -1) {
       updatedMilList[idx].specialty = spec;
-      setMilitaryList(updatedMilList);
-      saveState(updatedMilList, absences, roster, changelogs);
+      if (!saveState(updatedMilList, absences, roster, changelogs)) return;
       showToast(`Especialidade atualizada para ${updatedMilList[idx].rank}. ${updatedMilList[idx].name}`);
     }
   };
@@ -2217,7 +2179,7 @@ export default function RosterApp() {
                             <td className="p-4 text-center">
                               <div className="flex gap-2 justify-center">
                                 <button
-                                  onClick={() => setEditingMil(mil)}
+                                  onClick={() => { setEditingMilOriginal(clean(mil)); setEditingMil(clean(mil)); }}
                                   className="p-1.5 hover:bg-slate-100 rounded text-slate-500 hover:text-slate-950 transition-colors"
                                   title="Editar Militar"
                                 >

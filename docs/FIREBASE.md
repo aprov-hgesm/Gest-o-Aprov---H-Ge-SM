@@ -38,6 +38,7 @@ Ela inclui a versão que foi editada e operações pendentes. A interface só co
 Alterações próximas são agrupadas com uma espera de 700 ms, e operações são serializadas.
 A identificação de cada operação permite recuperar um envio confirmado pelo servidor cuja resposta se perdeu.
 Uma transação não sobrescreve uma revisão modificada por outro dispositivo.
+Se um cadastro de militar mudar enquanto seu formulário estiver aberto, o salvamento é bloqueado e o rascunho do formulário é mantido para comparação.
 Quando o navegador perde conexão, o rascunho permanece local e a reconexão tenta novamente.
 Se não houver espaço ou permissão para armazenamento local, o indicador solicita exportar antes de fechar.
 Se uma cópia local for ilegível, seus bytes originais não são substituídos.
