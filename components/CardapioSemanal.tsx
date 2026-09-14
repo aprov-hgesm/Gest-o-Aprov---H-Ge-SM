@@ -34,6 +34,9 @@ import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '@/lib/utils';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
+import SyncStatus from '@/components/SyncStatus';
+import { useCloudData } from '@/hooks/use-cloud-data';
+import { validateCardapio } from '@/lib/persistence/validation';
 
 // Quick meal presets for fast editing
 const PRESET_PROTEINAS = [
@@ -676,42 +679,39 @@ interface CardapioSemanalProps {
   onNotify?: (msg: string, type?: 'success' | 'info') => void;
 }
 
-export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
-  // State for cardápios loaded lazily from localStorage
-  const [cardapiosList, setCardapiosList] = useState<WeeklyCardapioDoc[]>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const saved = localStorage.getItem('dr_cardapios');
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            return parsed;
-          }
-        }
-      } catch {
-        // ignore
-      }
-    }
-    return [initialWeeklyCardapio];
-  });
+const initialCardapioDocuments = [initialWeeklyCardapio];
+function readLegacyCardapios(): WeeklyCardapioDoc[] | null {
+  const raw = localStorage.getItem('dr_cardapios');
+  return raw === null ? null : JSON.parse(raw);
+}
 
-  const [selectedCardapioId, setSelectedCardapioId] = useState<string>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const savedId = localStorage.getItem('dr_current_cardapio_id');
-        const savedList = localStorage.getItem('dr_cardapios');
-        if (savedList && savedId) {
-          const parsed = JSON.parse(savedList);
-          if (Array.isArray(parsed) && parsed.some(c => c.id === savedId)) {
-            return savedId;
-          }
-        }
-      } catch {
-        // ignore
-      }
-    }
-    return initialWeeklyCardapio.id;
+export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
+  const cardapioCloud = useCloudData({
+    name: 'cardapios', initial: initialCardapioDocuments,
+    validate: validateCardapio, legacy: readLegacyCardapios
   });
+  const cardapiosList = cardapioCloud.state.records;
+  const [selectedCardapioId, setSelectedCardapioId] = useState(initialWeeklyCardapio.id);
+  const [selectionLoaded, setSelectionLoaded] = useState(false);
+  useEffect(() => {
+    try {
+      const savedId = localStorage.getItem('dr_current_cardapio_id');
+      if (savedId) setSelectedCardapioId(savedId);
+    } catch { /* Selection preference is optional. */ }
+    setSelectionLoaded(true);
+  }, []);
+  useEffect(() => {
+    if (!selectionLoaded) return;
+    try { localStorage.setItem('dr_current_cardapio_id', selectedCardapioId); }
+    catch { /* Selection preference is optional. */ }
+  }, [selectedCardapioId, selectionLoaded]);
+
+  useEffect(() => {
+    if (!selectionLoaded || cardapioCloud.state.status === 'loading') return;
+    if (cardapiosList.length && !cardapiosList.some(item => item.id === selectedCardapioId)) {
+      setSelectedCardapioId(cardapiosList[0].id);
+    }
+  }, [cardapiosList, selectedCardapioId, selectionLoaded, cardapioCloud.state.status]);
 
   const [activeSubView, setActiveSubView] = useState<'A4' | 'EDITOR'>('A4');
   
@@ -793,28 +793,25 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
     showToast(`Cardápio de ${updated.dias[dayIdx].diaSemanaLabel} limpo.`);
   };
 
-  // Save to LocalStorage
   const saveCardapios = (list: WeeklyCardapioDoc[], currentId?: string) => {
-    setCardapiosList(list);
-    if (currentId) setSelectedCardapioId(currentId);
-    try {
-      localStorage.setItem('dr_cardapios', JSON.stringify(list));
-      if (currentId) localStorage.setItem('dr_current_cardapio_id', currentId);
-    } catch {
-      // ignore
-    }
+    if (cardapioCloud.controller.update(list) && currentId) setSelectedCardapioId(currentId);
   };
 
   const currentCardapio: WeeklyCardapioDoc = 
     cardapiosList.find(c => c.id === selectedCardapioId) || cardapiosList[0] || initialWeeklyCardapio;
 
   const showToast = (msg: string, type: 'success' | 'info' = 'success') => {
-    if (onNotify) onNotify(msg, type);
+    if (onNotify) {
+      const pending = cardapioCloud.controller.getSnapshot().pending;
+      onNotify(type === 'success' && pending ? msg + ' — envio ao servidor pendente.' : msg, type);
+    }
   };
 
   // Update current cardapio helper
   const updateCurrentCardapio = (updated: WeeklyCardapioDoc) => {
-    const updatedList = cardapiosList.map(c => c.id === updated.id ? updated : c);
+    const updatedList = cardapiosList.some(c => c.id === updated.id)
+      ? cardapiosList.map(c => c.id === updated.id ? updated : c)
+      : [updated, ...cardapiosList];
     saveCardapios(updatedList, updated.id);
   };
 
@@ -1186,6 +1183,7 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
   // Restore official mock template
   const handleResetToOfficialTemplate = () => {
     if (window.confirm('Deseja recarregar o cardápio modelo oficial da semana de 14 a 20 de setembro de 2026?')) {
+      if (!cardapioCloud.controller.checkpoint()) return;
       const filtered = cardapiosList.filter(c => c.id !== initialWeeklyCardapio.id);
       const newList = [initialWeeklyCardapio, ...filtered];
       saveCardapios(newList, initialWeeklyCardapio.id);
@@ -1275,6 +1273,7 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
 
   return (
     <div className="space-y-6">
+      <SyncStatus title="Cardápios semanais" state={cardapioCloud.state} controller={cardapioCloud.controller} position="left" />
       
       {/* ------------------------------------------------------------------- */}
       {/* TOP CONTROL BAR (Screen Only - Hidden in Print)                     */}

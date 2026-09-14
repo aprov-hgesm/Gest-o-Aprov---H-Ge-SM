@@ -1,0 +1,44 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function member() {
+      return request.auth != null &&
+        exists(/databases/$(database)/documents/aprov_members/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/aprov_members/$(request.auth.uid)).data.enabled == true;
+    }
+    function writer() {
+      return member() &&
+        get(/databases/$(database)/documents/aprov_members/$(request.auth.uid)).data.role in ['editor', 'admin'];
+    }
+    function validPayload(group, id) {
+      let value = request.resource.data.data;
+      return value is map && value.id == id &&
+        ((group == 'roster' && id == 'principal' &&
+          value.militaryList is list && value.absences is list && value.roster is map &&
+          value.changelogs is list && value.customHolidays is list) ||
+         (group == 'cardapios' && value.dataInicio is string && value.dataFim is string &&
+          value.workflow is map && value.dias is list && value.dias.size() == 7));
+    }
+    function validEnvelope(group, id) {
+      let value = request.resource.data;
+      return value.keys().hasOnly(['data', 'revision', 'mutationId', 'deleted', 'updatedAt', 'schemaVersion']) &&
+        value.schemaVersion == 1 && value.revision is int &&
+        value.mutationId is string && value.mutationId.size() > 0 &&
+        value.mutationId.size() <= 100 && value.deleted is bool &&
+        value.updatedAt == request.time && validPayload(group, id);
+    }
+    match /aprov_workspaces/hgesm/{group}/{id} {
+      allow read: if group in ['roster', 'cardapios'] && member();
+      allow create: if writer() && validEnvelope(group, id) &&
+        request.resource.data.revision == 1 && request.resource.data.deleted == false;
+      allow update: if writer() && validEnvelope(group, id) &&
+        request.resource.data.revision == resource.data.revision + 1;
+      // Tombstones retain revisions and prevent stale clients from recreating deleted records.
+      allow delete: if false;
+    }
+    // Membership is provisioned through the Firebase console/Admin SDK, never by the browser.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

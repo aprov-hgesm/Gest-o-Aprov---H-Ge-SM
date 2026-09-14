@@ -7,7 +7,10 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "clean": "next clean"
+    "clean": "next clean",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/persistence.test.ts",
+    "test:firestore": "firebase emulators:exec --only firestore --project demo-aprov --config firebase.json \"node --test tests/firestore.integration.test.ts\""
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

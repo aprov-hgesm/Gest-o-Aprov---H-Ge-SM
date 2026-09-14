@@ -1,0 +1,15 @@
+{
+  "indexes": [],
+  "fieldOverrides": [
+    {
+      "collectionGroup": "roster",
+      "fieldPath": "data",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "cardapios",
+      "fieldPath": "data",
+      "indexes": []
+    }
+  ]
+}

@@ -29,6 +29,9 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '@/lib/utils';
 import CardapioSemanal from '@/components/CardapioSemanal';
+import SyncStatus from '@/components/SyncStatus';
+import { useCloudData } from '@/hooks/use-cloud-data';
+import { validateRoster } from '@/lib/persistence/validation';
 
 // ==========================================
 // TYPES & SCHEMAS
@@ -394,7 +397,37 @@ const getDayNumberFromISO = (isoStr: string): number => {
   return isNaN(num) ? 1 : num;
 };
 
+interface RosterDocument {
+  id: string;
+  militaryList: Military[];
+  absences: Absence[];
+  roster: WeekRoster;
+  changelogs: LogEntry[];
+  customHolidays: HolidayDate[];
+}
+const initialRosterDocuments: RosterDocument[] = [{
+  id: 'principal', militaryList: initialMilitary, absences: initialAbsences,
+  roster: initialRoster, changelogs: initialLogs, customHolidays: initialHolidays
+}];
+function readLegacyRoster(): RosterDocument[] | null {
+  const keys = ['dr_military', 'dr_absences', 'dr_roster', 'dr_logs', 'dr_holidays'] as const;
+  const raw = keys.map(key => localStorage.getItem(key));
+  if (raw.every(value => value === null)) return null;
+  return [{
+    id: 'principal',
+    militaryList: raw[0] === null ? initialMilitary : JSON.parse(raw[0]),
+    absences: raw[1] === null ? initialAbsences : JSON.parse(raw[1]),
+    roster: raw[2] === null ? initialRoster : JSON.parse(raw[2]),
+    changelogs: raw[3] === null ? initialLogs : JSON.parse(raw[3]),
+    customHolidays: raw[4] === null ? initialHolidays : JSON.parse(raw[4])
+  }];
+}
+
 export default function RosterApp() {
+  const rosterCloud = useCloudData({
+    name: 'roster', initial: initialRosterDocuments,
+    validate: validateRoster, legacy: readLegacyRoster
+  });
   // ==========================================
   // STATE MANAGEMENT
   // ==========================================
@@ -471,53 +504,33 @@ export default function RosterApp() {
   // Notification Toast state
   const [toast, setToast] = useState<{ show: boolean; msg: string; type: 'success' | 'info' }>({ show: false, msg: '', type: 'success' });
 
-  // Load state from localStorage if it exists
+  const cloudRoster = rosterCloud.state.records[0];
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const hasClearedForWeekend = localStorage.getItem('dr_cleared_weekend_scale_v5');
-      if (!hasClearedForWeekend) {
-        localStorage.removeItem('dr_military');
-        localStorage.removeItem('dr_absences');
-        localStorage.removeItem('dr_roster');
-        localStorage.removeItem('dr_logs');
-        localStorage.removeItem('dr_holidays');
-        localStorage.setItem('dr_cleared_weekend_scale_v5', 'true');
-        return;
-      }
+    if (!cloudRoster) return;
+    setMilitaryList(cloudRoster.militaryList);
+    setAbsences(cloudRoster.absences);
+    setRoster(cloudRoster.roster);
+    setChangelogs(cloudRoster.changelogs);
+    setCustomHolidays(cloudRoster.customHolidays);
+  }, [cloudRoster]);
 
-      const savedMilitary = localStorage.getItem('dr_military');
-      const savedAbsences = localStorage.getItem('dr_absences');
-      const savedRoster = localStorage.getItem('dr_roster');
-      const savedLogs = localStorage.getItem('dr_logs');
-      const savedHolidays = localStorage.getItem('dr_holidays');
-
-      setTimeout(() => {
-        if (savedMilitary) setMilitaryList(JSON.parse(savedMilitary));
-        if (savedAbsences) setAbsences(JSON.parse(savedAbsences));
-        if (savedRoster) setRoster(JSON.parse(savedRoster));
-        if (savedLogs) setChangelogs(JSON.parse(savedLogs));
-        if (savedHolidays) setCustomHolidays(JSON.parse(savedHolidays));
-      }, 0);
-    }
-  }, []);
-
-  // Save state helper
+  // One versioned document keeps personnel, absences and assignments consistent.
   const saveState = (
     newMil: Military[],
     newAbs: Absence[],
     newRos: WeekRoster,
     newLogs: LogEntry[],
-    newHolidays?: HolidayDate[]
+    newHolidays: HolidayDate[] = customHolidays
   ) => {
-    localStorage.setItem('dr_military', JSON.stringify(newMil));
-    localStorage.setItem('dr_absences', JSON.stringify(newAbs));
-    localStorage.setItem('dr_roster', JSON.stringify(newRos));
-    localStorage.setItem('dr_logs', JSON.stringify(newLogs));
-    if (newHolidays) localStorage.setItem('dr_holidays', JSON.stringify(newHolidays));
+    rosterCloud.controller.update([{
+      id: 'principal', militaryList: newMil, absences: newAbs,
+      roster: newRos, changelogs: newLogs, customHolidays: newHolidays
+    }]);
   };
 
   const showToast = (msg: string, type: 'success' | 'info' = 'success') => {
-    setToast({ show: true, msg, type });
+    const pending = rosterCloud.controller.getSnapshot().pending;
+    setToast({ show: true, msg: type === 'success' && pending ? msg + ' — envio ao servidor pendente.' : msg, type });
     setTimeout(() => setToast({ show: false, msg: '', type: 'success' }), 4000);
   };
 
@@ -745,26 +758,13 @@ export default function RosterApp() {
     showToast('Dados e vínculos atualizados com sucesso!');
   };
 
-  // Reset database to initial mock data
+  // Reset is an explicit, recoverable cloud operation, never an automatic deletion.
   const handleResetDatabase = () => {
-    if (window.confirm('Atenção: Isso redefinirá todos os dados (Militares, Escalas, Afastamentos, Feriados) para os valores padrão de escala de finais de semana. Deseja prosseguir?')) {
-      localStorage.removeItem('dr_military');
-      localStorage.removeItem('dr_absences');
-      localStorage.removeItem('dr_roster');
-      localStorage.removeItem('dr_logs');
-      localStorage.removeItem('dr_min_verm');
-      localStorage.removeItem('dr_holidays');
-      
-      const freshHolidays = initialHolidays;
+    if (window.confirm('Redefinir militares, escalas, afastamentos e feriados para o modelo inicial? A alteração será sincronizada com os demais dispositivos.')) {
+      if (!rosterCloud.controller.checkpoint()) return;
       const freshRoster = createEmptyRoster();
-
-      setMilitaryList(initialMilitary);
-      setAbsences(initialAbsences);
-      setCustomHolidays(freshHolidays);
-      setRoster(freshRoster);
-      setChangelogs(initialLogs);
-      
-      showToast('Escala e banco de dados redefinidos com sucesso!');
+      saveState(initialMilitary, initialAbsences, freshRoster, initialLogs, initialHolidays);
+      showToast('Redefinição registrada.');
     }
   };
 
@@ -1168,6 +1168,7 @@ export default function RosterApp() {
             </button>
           </div>
         </header>
+        <SyncStatus title="Escalas e efetivo" state={rosterCloud.state} controller={rosterCloud.controller} />
 
         {/* Scrollable Main Area */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">

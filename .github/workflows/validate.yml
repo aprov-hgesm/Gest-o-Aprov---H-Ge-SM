@@ -1,0 +1,40 @@
+name: Validate Firestore integration
+on:
+  push:
+    branches: [main, codex/integracao-firestore]
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+      - name: TypeScript
+        run: bun run typecheck
+      - name: Persistence and recovery tests
+        run: bun run test
+      - name: Firestore emulator and security rules
+        run: bun run test:firestore
+      - name: Production build
+        run: bun run build
+        env:
+          NODE_ENV: production
