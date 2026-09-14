@@ -3599,36 +3599,10 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
                       </table>
                     </div>
                   </div>
-
-                  {/* Official Signatures Footer */}
-                  <div className="mt-8 pt-4 border-t border-slate-300">
-                    <div className="grid grid-cols-3 gap-6 text-center text-[10px]">
-                      <div>
-                        <div className="border-b border-black mb-1 w-44 mx-auto" />
-                        <p className="font-black uppercase text-black">{currentCardapio.responsavelTecnico.nome}</p>
-                        <p className="text-slate-600 font-semibold">{currentCardapio.responsavelTecnico.postoGraduacao} {currentCardapio.responsavelTecnico.funcao}</p>
-                        <p className="text-[9px] text-slate-500">Nutricionista RT</p>
-                      </div>
-
-                      <div>
-                        <div className="border-b border-black mb-1 w-44 mx-auto" />
-                        <p className="font-black uppercase text-black">ENCARREGADO DA CÂMARA FRIA</p>
-                        <p className="text-slate-600 font-semibold">Despenseiro de Insumos</p>
-                        <p className="text-[9px] text-slate-500">Controle e Pesagem Física</p>
-                      </div>
-
-                      <div>
-                        <div className="border-b border-black mb-1 w-44 mx-auto" />
-                        <p className="font-black uppercase text-black">{currentCardapio.workflow.aprovado.responsavel}</p>
-                        <p className="text-slate-600 font-semibold">{currentCardapio.workflow.aprovado.cargo}</p>
-                        <p className="text-[9px] text-slate-500">Aprovação e Fiscalização</p>
-                      </div>
-                    </div>
-
-                    <div className="mt-4 pt-2 border-t border-slate-200 text-center text-[8.5px] text-slate-500">
-                      Documento oficial gerado pelo Sistema de Aprovisionamento do Hospital Geral de Santa Maria (HGeSM) • Uso interno de controle de estoque e segurança dos alimentos.
-                    </div>
-                  </div>
+        {/* Document Footer */}
+        <div className="mt-6 pt-2 border-t border-slate-200 text-center text-[8.5px] text-slate-500">
+          Documento oficial gerado pelo Sistema de Aprovisionamento do Hospital Geral de Santa Maria (HGeSM) • Uso interno de controle de estoque e segurança dos alimentos.
+        </div>
 
                 </div>
               </div>
