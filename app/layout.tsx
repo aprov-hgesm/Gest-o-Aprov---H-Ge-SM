@@ -1,5 +1,6 @@
-import type {Metadata} from 'next';
+import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
+import AuthGate from '@/components/AuthGate';
 import './globals.css'; // Global styles
 
 const inter = Inter({
@@ -12,11 +13,11 @@ export const metadata: Metadata = {
   description: 'Sistema de gestão e operação manual de escalas de serviço e elaboração de cardápio semanal de aprovisionamento.',
 };
 
-export default function RootLayout({children}: {children: React.ReactNode}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="pt-BR" className={`${inter.variable}`}>
       <body className="font-sans antialiased text-slate-900 bg-slate-50/50" suppressHydrationWarning>
-        {children}
+        <AuthGate>{children}</AuthGate>
       </body>
     </html>
   );

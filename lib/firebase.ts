@@ -1,19 +1,21 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { 
-  getAuth, 
-  GoogleAuthProvider, 
-  signInWithPopup, 
+import {
+  getAuth,
+  GoogleAuthProvider,
+  signInWithPopup,
   signOut as firebaseSignOut,
   onAuthStateChanged,
   type User
 } from 'firebase/auth';
-import { 
-  getFirestore, 
-  doc, 
+import {
+  getFirestore,
+  doc,
   getDocFromServer,
   connectFirestoreEmulator
 } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
+
+export const AUTHORIZED_EMAIL = 'aprov1hgesm@gmail.com';
 
 // Initialize Firebase App
 const useEmulator = !!process.env.NEXT_PUBLIC_FIRESTORE_EMULATOR_HOST && process.env.NODE_ENV !== 'production';
@@ -47,6 +49,12 @@ export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({
   prompt: 'select_account'
 });
+
+export function isAuthorizedUser(user: User | null): boolean {
+  return !!user &&
+    user.email?.toLowerCase() === AUTHORIZED_EMAIL &&
+    user.emailVerified === true;
+}
 
 // ==========================================
 // ERROR HANDLING (FirestoreErrorInfo Standard)
@@ -117,6 +125,10 @@ export async function testConnection(): Promise<boolean> {
 export async function signInWithGoogle(): Promise<User | null> {
   try {
     const result = await signInWithPopup(auth, googleProvider);
+    if (!isAuthorizedUser(result.user)) {
+      await firebaseSignOut(auth);
+      throw new Error('Acesso não autorizado. Utilize a conta institucional do Aprovisionamento.');
+    }
     return result.user;
   } catch (error) {
     console.error('Erro no login Google com Firebase:', error);

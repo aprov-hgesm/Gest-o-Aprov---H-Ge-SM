@@ -1,14 +1,10 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function member() {
+    function authorizedUser() {
       return request.auth != null &&
-        exists(/databases/$(database)/documents/aprov_members/$(request.auth.uid)) &&
-        get(/databases/$(database)/documents/aprov_members/$(request.auth.uid)).data.enabled == true;
-    }
-    function writer() {
-      return member() &&
-        get(/databases/$(database)/documents/aprov_members/$(request.auth.uid)).data.role in ['editor', 'admin'];
+        request.auth.token.email == 'aprov1hgesm@gmail.com' &&
+        request.auth.token.email_verified == true;
     }
     function validPayload(group, id) {
       let value = request.resource.data.data;
@@ -28,15 +24,14 @@ service cloud.firestore {
         value.updatedAt == request.time && validPayload(group, id);
     }
     match /aprov_workspaces/hgesm/{group}/{id} {
-      allow read: if group in ['roster', 'cardapios'] && member();
-      allow create: if writer() && validEnvelope(group, id) &&
+      allow read: if group in ['roster', 'cardapios'] && authorizedUser();
+      allow create: if authorizedUser() && validEnvelope(group, id) &&
         request.resource.data.revision == 1 && request.resource.data.deleted == false;
-      allow update: if writer() && validEnvelope(group, id) &&
+      allow update: if authorizedUser() && validEnvelope(group, id) &&
         request.resource.data.revision == resource.data.revision + 1;
       // Tombstones retain revisions and prevent stale clients from recreating deleted records.
       allow delete: if false;
     }
-    // Membership is provisioned through the Firebase console/Admin SDK, never by the browser.
     match /{document=**} {
       allow read, write: if false;
     }
