@@ -4,9 +4,13 @@ on:
   push:
     branches:
       - diag/firebase-auth-config-20260914
+  pull_request:
+    branches:
+      - main
 
 jobs:
   diagnose:
+    if: github.event_name == 'push' || github.head_ref == 'diag/firebase-auth-config-20260914'
     runs-on: ubuntu-latest
     steps:
       - name: Inspect public Firebase Auth configuration and production origin
