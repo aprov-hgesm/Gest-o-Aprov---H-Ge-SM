@@ -10,7 +10,6 @@ permissions:
 
 jobs:
   patch:
-    if: github.event.head_commit.message != 'fix: remove campos de assinatura do Saque de Carnes'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
