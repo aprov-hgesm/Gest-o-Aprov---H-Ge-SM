@@ -2,6 +2,7 @@ from pathlib import Path
 
 script_path = Path('scripts/temp_fix_saque_paciente.py')
 script = script_path.read_text(encoding='utf-8')
+
 start_marker = "replace_once(\n\"\"\"      text += `   • Consumo:"
 label_marker = "'text export origin')"
 start = script.find(start_marker)
@@ -12,6 +13,12 @@ if label < 0:
     raise SystemExit('text export replacement block end not found')
 end = label + len(label_marker)
 script = script[:start] + script[end:]
+
+workflow_start = script.find("\nworkflow = Path('.github/workflows/validate.yml')")
+if workflow_start < 0:
+    raise SystemExit('validate workflow modification block not found')
+script = script[:workflow_start] + '\n'
+
 exec(compile(script, str(script_path), 'exec'), {})
 
 component = Path('components/CardapioSemanal.tsx')
