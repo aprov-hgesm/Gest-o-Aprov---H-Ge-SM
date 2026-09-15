@@ -1,8 +1,10 @@
 /*
- * html2canvas 1.4.x não interpreta oklab/oklch/color-mix usados pelo Tailwind 4.
- * A raiz usa RGB explícito porque html2canvas consulta html/body antes de capturar
- * qualquer elemento, mesmo quando o alvo já recebeu uma paleta compatível.
- * As demais regras ficam limitadas às folhas oficiais exportadas para PDF.
+ * Compatibilidade visual para exportação via html2canvas 1.4.x.
+ *
+ * Tailwind CSS 4 usa oklab/oklch/color-mix em várias cores. O html2canvas 1.4.x
+ * não interpreta essas funções. A estratégia abaixo troca apenas as propriedades
+ * de cor por valores RGB/HEX seguros durante a captura, sem transformar todos os
+ * elementos em blocos brancos (o que encobria textos e comprometia a leitura).
  */
 
 html,
@@ -11,6 +13,7 @@ body.app-safe-body {
   background-color: #f8fafc;
 }
 
+/* Base segura: elementos continuam transparentes, como no layout original. */
 :is(
   #cardapio-print-sheet.pdf-rendering-active,
   #cardapio-print-sheet.pdf-rendering-active *,
@@ -23,7 +26,7 @@ body.app-safe-body {
 ) {
   color-scheme: light !important;
   color: #0f172a !important;
-  background-color: #ffffff !important;
+  background-color: transparent !important;
   border-color: #cbd5e1 !important;
   outline-color: #94a3b8 !important;
   text-decoration-color: #64748b !important;
@@ -34,18 +37,49 @@ body.app-safe-body {
   --tw-shadow-color: rgba(15, 23, 42, 0.12) !important;
 }
 
+/* A folha em si permanece branca. */
 :is(
   #cardapio-print-sheet.pdf-rendering-active,
   #saque-carnes-print-sheet
 ) {
+  background-color: #ffffff !important;
+  font-family: Arial, Helvetica, sans-serif !important;
+}
+
+/* Fundos neutros. */
+:is(
+  #cardapio-print-sheet.pdf-rendering-active,
+  #saque-carnes-print-sheet
+) :is([class*="bg-white"]) {
   background-color: #ffffff !important;
 }
 
 :is(
   #cardapio-print-sheet.pdf-rendering-active,
   #saque-carnes-print-sheet
-) :is([class*="bg-slate-50"], [class*="bg-slate-100"], [class*="bg-gray-50"], [class*="bg-gray-100"]) {
+) :is([class*="bg-slate-50"], [class*="bg-gray-50"]) {
+  background-color: #f8fafc !important;
+}
+
+:is(
+  #cardapio-print-sheet.pdf-rendering-active,
+  #saque-carnes-print-sheet
+) :is([class*="bg-slate-100"], [class*="bg-gray-100"]) {
   background-color: #f1f5f9 !important;
+}
+
+:is(
+  #cardapio-print-sheet.pdf-rendering-active,
+  #saque-carnes-print-sheet
+) :is([class*="bg-slate-200"], [class*="bg-gray-200"]) {
+  background-color: #e2e8f0 !important;
+}
+
+:is(
+  #cardapio-print-sheet.pdf-rendering-active,
+  #saque-carnes-print-sheet
+) :is([class*="bg-slate-300"], [class*="bg-gray-300"]) {
+  background-color: #cbd5e1 !important;
 }
 
 :is(
@@ -57,6 +91,7 @@ body.app-safe-body {
   border-color: #334155 !important;
 }
 
+/* Fundos de estado usados nos documentos. */
 :is(
   #cardapio-print-sheet.pdf-rendering-active,
   #saque-carnes-print-sheet
@@ -96,8 +131,96 @@ body.app-safe-body {
 :is(
   #cardapio-print-sheet.pdf-rendering-active,
   #saque-carnes-print-sheet
+) :is([class*="bg-purple-"]) {
+  background-color: #f3e8ff !important;
+  border-color: #d8b4fe !important;
+  color: #581c87 !important;
+}
+
+/* Bordas institucionais pretas precisam continuar pretas no PDF. */
+:is(
+  #cardapio-print-sheet.pdf-rendering-active,
+  #saque-carnes-print-sheet
+) :is([class*="border-black"]) {
+  border-color: #000000 !important;
+}
+
+:is(
+  #cardapio-print-sheet.pdf-rendering-active,
+  #saque-carnes-print-sheet
+) :is([class*="border-slate-200"]) {
+  border-color: #e2e8f0 !important;
+}
+
+:is(
+  #cardapio-print-sheet.pdf-rendering-active,
+  #saque-carnes-print-sheet
+) :is([class*="border-slate-300"]) {
+  border-color: #cbd5e1 !important;
+}
+
+:is(
+  #cardapio-print-sheet.pdf-rendering-active,
+  #saque-carnes-print-sheet
+) :is([class*="border-slate-400"]) {
+  border-color: #94a3b8 !important;
+}
+
+/* Cores de texto em HEX/RGB para evitar oklch. */
+:is(
+  #cardapio-print-sheet.pdf-rendering-active,
+  #saque-carnes-print-sheet
+) :is([class*="text-black"]) {
+  color: #000000 !important;
+}
+
+:is(
+  #cardapio-print-sheet.pdf-rendering-active,
+  #saque-carnes-print-sheet
 ) :is([class*="text-white"], [class*="text-slate-50"]) {
   color: #ffffff !important;
+}
+
+:is(
+  #cardapio-print-sheet.pdf-rendering-active,
+  #saque-carnes-print-sheet
+) :is([class*="text-slate-900"], [class*="text-slate-950"]) {
+  color: #0f172a !important;
+}
+
+:is(
+  #cardapio-print-sheet.pdf-rendering-active,
+  #saque-carnes-print-sheet
+) :is([class*="text-slate-800"]) {
+  color: #1e293b !important;
+}
+
+:is(
+  #cardapio-print-sheet.pdf-rendering-active,
+  #saque-carnes-print-sheet
+) :is([class*="text-slate-700"]) {
+  color: #334155 !important;
+}
+
+:is(
+  #cardapio-print-sheet.pdf-rendering-active,
+  #saque-carnes-print-sheet
+) :is([class*="text-slate-600"]) {
+  color: #475569 !important;
+}
+
+:is(
+  #cardapio-print-sheet.pdf-rendering-active,
+  #saque-carnes-print-sheet
+) :is([class*="text-slate-500"]) {
+  color: #64748b !important;
+}
+
+:is(
+  #cardapio-print-sheet.pdf-rendering-active,
+  #saque-carnes-print-sheet
+) :is([class*="text-slate-400"]) {
+  color: #94a3b8 !important;
 }
 
 :is(
@@ -124,7 +247,22 @@ body.app-safe-body {
 :is(
   #cardapio-print-sheet.pdf-rendering-active,
   #saque-carnes-print-sheet
+) :is([class*="text-blue-"], [class*="text-sky-"], [class*="text-indigo-"]) {
+  color: #1e40af !important;
+}
+
+:is(
+  #cardapio-print-sheet.pdf-rendering-active,
+  #saque-carnes-print-sheet
+) :is([class*="text-purple-"]) {
+  color: #6b21a8 !important;
+}
+
+:is(
+  #cardapio-print-sheet.pdf-rendering-active,
+  #saque-carnes-print-sheet
 ) svg {
   color: currentColor !important;
   filter: none !important;
+  background-color: transparent !important;
 }
