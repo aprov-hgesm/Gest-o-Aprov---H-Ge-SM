@@ -11,7 +11,7 @@ concurrency:
 jobs:
   validation:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       NEXT_TELEMETRY_DISABLED: '1'
     steps:
@@ -46,7 +46,11 @@ jobs:
         run: bunx firebase emulators:exec --only firestore --project demo-aprov --config tests/firebase.browser.json "node tests/browser-smoke.mjs"
         env:
           APROV_PLAYWRIGHT_MODULE: /tmp/aprov-browser-tools/node_modules/playwright/index.mjs
-      - name: Upload browser screenshot
+      - name: PDF download smoke test
+        run: bunx firebase emulators:exec --only firestore --project demo-aprov --config tests/firebase.browser.json "node tests/pdf-download-smoke.mjs"
+        env:
+          APROV_PLAYWRIGHT_MODULE: /tmp/aprov-browser-tools/node_modules/playwright/index.mjs
+      - name: Upload browser artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
