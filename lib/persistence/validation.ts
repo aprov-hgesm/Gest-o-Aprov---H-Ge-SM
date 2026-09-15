@@ -29,8 +29,10 @@ function day(value: unknown): boolean {
   if (!object(value) || !strings(value, ['date', 'diaSemana', 'diaSemanaLabel', 'cafeManhaCeia',
     'colacaoPaciente', 'ceia']) || !object(value.almoco) || !object(value.almoco.geral) ||
     typeof value.almoco.pacienteProteina !== 'string' ||
+    !optional(value.almoco, 'pacienteTipoCarne', 'string') || !quantity(value.almoco.pacienteQuantidadeKg) ||
     !object(value.jantarPaciente) || typeof value.jantarPaciente.prato !== 'string' ||
-    !optional(value.jantarPaciente, 'proteina', 'string')) return false;
+    !optional(value.jantarPaciente, 'proteina', 'string') ||
+    !optional(value.jantarPaciente, 'tipoCarne', 'string') || !quantity(value.jantarPaciente.quantidadeKg)) return false;
   const meal = value.almoco.geral;
   return strings(meal, ['arroz', 'feijao', 'proteina', 'guarnicao', 'salada', 'bebida', 'sobremesa']) &&
     quantity(meal.quantidadeKg) &&
