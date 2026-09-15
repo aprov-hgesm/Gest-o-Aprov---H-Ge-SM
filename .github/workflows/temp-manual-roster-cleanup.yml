@@ -10,156 +10,20 @@ permissions:
 
 jobs:
   patch:
-    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
         with:
           ref: fix/escala-manual-sem-regras
           fetch-depth: 0
-      - name: Apply manual roster rules cleanup
-        shell: bash
+      - name: Apply cleanup
+        run: python .github/scripts/apply_manual_roster_cleanup.py
+      - name: Commit cleanup
         run: |
-          python <<'PY'
-          from pathlib import Path
-          path = Path('app/page.tsx')
-          source = path.read_text(encoding='utf-8')
-          def replace_once(old: str, new: str, label: str):
-              global source
-              count = source.count(old)
-              if count != 1:
-                  raise SystemExit(f'{label}: expected exactly 1 match, found {count}')
-              source = source.replace(old, new, 1)
-          replace_once("""    if (milId !== 'empty') {
-                const otherPostAssigned = Object.keys(updatedRoster[day] || {}).find(
-                  otherPost => otherPost !== post && updatedRoster[day][otherPost]?.militaryId === milId
-                );
-                if (otherPostAssigned) {
-                  if (!window.confirm(`Atenção: Este militar já está escalado hoje no posto \"${otherPostAssigned}\". Deseja transferi-lo para \"${post}\"?`)) {
-                    return;
-                  }
-                  // Transfer: clear from the previous post on this day
-                  if (updatedRoster[day]) {
-                    updatedRoster[day][otherPostAssigned] = null;
-                  }
-                }
-
-                if (selectedAssignType !== 'DISP' && isMilitaryAbsentOnDay(milId, day, absences)) {
-                  if (!window.confirm('Atenção: Este militar possui registro de afastamento ou dispensa para esta data. Deseja escalá-lo manualmente mesmo assim?')) {
-                    return;
-                  }
-                }
-              }
-""", """    if (milId !== 'empty' && isMilitaryAbsentOnDay(milId, day, absences)) {
-                showToast('Militar afastado nesta data. Finalize ou ajuste o afastamento na aba Afastamentos antes de escalá-lo.', 'info');
-                return;
-              }
-""", 'assignment guard')
-          replace_once('Clique em qualquer célula de fim de semana ou feriado para designar militares, alterar tipo ou desmarcar.', 'A designação é totalmente manual e não aplica rodízio, prioridade, especialidade, contagem de serviços ou regra entre dias. Apenas afastamentos cadastrados para a data impedem a seleção.', 'manual operation notice')
-          replace_once("{militaryList.filter(m => m.type !== 'EP').length} Militares Elegíveis", "{militaryList.length} Militares Cadastrados", 'eligible badge')
-          replace_once('Controle de efetivo, atribuição de funções e regras de rodízio para os plantões de fim de semana.', 'Preenchimento manual sem rodízio ou prioridade automática. Somente afastamentos registrados na aba própria bloqueiam a seleção na respectiva data.', 'roster section description')
-          replace_once('Efetivo da Escala Vermelha', 'Efetivo Cadastrado para Alocação Manual', 'roster personnel heading')
-          replace_once('Clique na função para alterar', 'Referência cadastral; não limita a seleção', 'roster personnel helper')
-          replace_once("{militaryList.filter(m => m.type !== 'EP').map(m => (", "{militaryList.map(m => (", 'personnel table filtering')
-          replace_once('Dados acumulados de serviços cumpridos para orientar o operador a balancear os plantões de fim de semana manualmente.', 'Dados acumulados exibidos apenas para consulta. Eles não alteram, ordenam nem priorizam a seleção manual dos militares.', 'workload explanation')
-          replace_once('Ordem de Prioridade', 'Indicador Informativo', 'priority label')
-          replace_once("""                    {[...militaryList]
-                      .sort((a, b) => a.dutyCount - b.dutyCount)
-                      .map(mil => {
-""", """                    {militaryList.map(mil => {
-""", 'workload ordering')
-          replace_once("""                {militaryList
-                  .filter(mil => {
-                    if (!modalSearch) return true;
-                    const query = modalSearch.toLowerCase();
-                    return (
-                      mil.name.toLowerCase().includes(query) ||
-                      mil.fullName.toLowerCase().includes(query) ||
-                      mil.rank.toLowerCase().includes(query) ||
-                      mil.specialty.toLowerCase().includes(query)
-                    );
-                  })
-                  .sort((a, b) => {
-                    // Match selected post specialty first
-                    const aMatch = a.specialty === selectedCell.post || a.specialtySecondary === selectedCell.post ? 1 : 0;
-                    const bMatch = b.specialty === selectedCell.post || b.specialtySecondary === selectedCell.post ? 1 : 0;
-                    if (aMatch !== bMatch) return bMatch - aMatch;
-                    return a.dutyCount - b.dutyCount;
-                  })
-                  .map(mil => {
-                    const otherPostAssigned = Object.keys(roster[selectedCell.day] || {}).find(
-                      p => p !== selectedCell.post && roster[selectedCell.day][p]?.militaryId === mil.id
-                    );
-                    const isOccupiedToday = !!otherPostAssigned;
-                    const isAbsent = isMilitaryAbsentOnDay(mil.id, selectedCell.day, absences);
-                    const isSpecialist = mil.specialty === selectedCell.post || mil.specialtySecondary === selectedCell.post;
-
-                    return (
-""", """                {militaryList
-                  .filter(mil => {
-                    if (isMilitaryAbsentOnDay(mil.id, selectedCell.day, absences)) return false;
-                    if (!modalSearch) return true;
-                    const query = modalSearch.toLowerCase();
-                    return (
-                      mil.name.toLowerCase().includes(query) ||
-                      mil.fullName.toLowerCase().includes(query) ||
-                      mil.rank.toLowerCase().includes(query) ||
-                      mil.specialty.toLowerCase().includes(query)
-                    );
-                  })
-                  .map(mil => {
-                    return (
-""", 'selection filtering and ordering')
-          replace_once("""                        <div className=\"flex items-center gap-2.5\">
-                          <span className=\"w-7 h-7 rounded-md bg-slate-100 flex items-center justify-center font-bold font-mono text-[10px] text-slate-600 shrink-0\">
-                            {mil.dutyCount}
-                          </span>
-                          <div>
-                            <div className=\"flex items-center gap-1.5\">
-                              <p className=\"font-semibold text-slate-900\">{mil.rank}. {mil.fullName}</p>
-                              {isSpecialist && (
-                                <span className=\"text-[9px] font-bold bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded\">
-                                  Especialista
-                                </span>
-                              )}
-                            </div>
-                            <p className=\"text-[10px] text-slate-500\">
-                              {mil.specialty}
-                              {mil.specialtySecondary ? ` / ${mil.specialtySecondary}` : ''}
-                              {isAbsent && <span className=\"text-amber-600 font-semibold\"> • Afastado</span>}
-                              {isOccupiedToday && <span className=\"text-blue-600 font-semibold\"> • Escalado em {otherPostAssigned}</span>}
-                            </p>
-                          </div>
-                        </div>
-                        <div className=\"text-right shrink-0\">
-                          <span className=\"text-[10px] font-mono font-bold text-slate-400 block\">
-                            {mil.dutyCount} sv
-                          </span>
-                        </div>
-""", """                        <div className=\"flex items-center gap-2.5 min-w-0\">
-                          <span className=\"w-7 h-7 rounded-md bg-slate-100 flex items-center justify-center font-bold text-[10px] text-slate-600 shrink-0\">
-                            {mil.name.slice(0, 2).toUpperCase()}
-                          </span>
-                          <div className=\"min-w-0\">
-                            <p className=\"font-semibold text-slate-900 truncate\">{mil.rank}. {mil.fullName}</p>
-                            <p className=\"text-[10px] text-slate-500 truncate\">
-                              {mil.name} • {mil.specialty}{mil.specialtySecondary ? ` / ${mil.specialtySecondary}` : ''}
-                            </p>
-                          </div>
-                        </div>
-""", 'neutral selection card')
-          replace_once("""              {/* Quick Search */}
-""", """              <div className=\"p-2.5 bg-emerald-50 border border-emerald-200 rounded-lg text-[11px] text-emerald-900 leading-relaxed\">
-                Todos os militares sem afastamento vigente nesta data podem ser selecionados livremente. A lista não aplica prioridade ou bloqueio por função, contagem de serviços, tipo de escala, dia anterior ou dia seguinte.
-              </div>
-
-              {/* Quick Search */}
-""", 'selection policy notice')
-          path.write_text(source, encoding='utf-8')
-          PY
           rm .github/workflows/temp-manual-roster-cleanup.yml
+          rm .github/scripts/apply_manual_roster_cleanup.py
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app/page.tsx .github/workflows/temp-manual-roster-cleanup.yml
+          git add app/page.tsx .github/workflows/temp-manual-roster-cleanup.yml .github/scripts/apply_manual_roster_cleanup.py
           git commit -m "Tornar escala manual sem regras de seleção"
           git push origin HEAD:fix/escala-manual-sem-regras
