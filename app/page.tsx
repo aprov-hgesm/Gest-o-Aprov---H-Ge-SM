@@ -562,25 +562,9 @@ export default function RosterApp() {
     const updatedMilList = clean(militaryList);
     let logsList = [...changelogs];
 
-    if (milId !== 'empty') {
-      const otherPostAssigned = Object.keys(updatedRoster[day] || {}).find(
-        otherPost => otherPost !== post && updatedRoster[day][otherPost]?.militaryId === milId
-      );
-      if (otherPostAssigned) {
-        if (!window.confirm(`Atenção: Este militar já está escalado hoje no posto "${otherPostAssigned}". Deseja transferi-lo para "${post}"?`)) {
-          return;
-        }
-        // Transfer: clear from the previous post on this day
-        if (updatedRoster[day]) {
-          updatedRoster[day][otherPostAssigned] = null;
-        }
-      }
-
-      if (selectedAssignType !== 'DISP' && isMilitaryAbsentOnDay(milId, day, absences)) {
-        if (!window.confirm('Atenção: Este militar possui registro de afastamento ou dispensa para esta data. Deseja escalá-lo manualmente mesmo assim?')) {
-          return;
-        }
-      }
+    if (milId !== 'empty' && isMilitaryAbsentOnDay(milId, day, absences)) {
+      showToast('Militar afastado nesta data. Finalize ou ajuste o afastamento na aba Afastamentos antes de escalá-lo.', 'info');
+      return;
     }
 
     const prevCell = updatedRoster[day] ? updatedRoster[day][post] : null;
@@ -1194,7 +1178,7 @@ export default function RosterApp() {
                       Operação Manual da Escala
                     </p>
                     <p className="text-[11px] text-slate-500">
-                      Clique em qualquer célula de fim de semana ou feriado para designar militares, alterar tipo ou desmarcar.
+                      A designação é totalmente manual e não aplica rodízio, prioridade, especialidade, contagem de serviços ou regra entre dias. Apenas afastamentos cadastrados para a data impedem a seleção.
                     </p>
                   </div>
                 </div>
@@ -1488,11 +1472,11 @@ export default function RosterApp() {
                       <div className="flex items-center gap-2">
                         <h4 className="font-bold text-slate-900 text-base">Escala Vermelha (Fins de Semana e Feriados)</h4>
                         <span className="text-[10px] font-bold uppercase tracking-wider bg-rose-100 text-rose-700 px-2 py-0.5 rounded-full">
-                          {militaryList.filter(m => m.type !== 'EP').length} Militares Elegíveis
+                          {militaryList.length} Militares Cadastrados
                         </span>
                       </div>
                       <p className="text-xs text-slate-500 mt-0.5">
-                        Controle de efetivo, atribuição de funções e regras de rodízio para os plantões de fim de semana.
+                        Preenchimento manual sem rodízio ou prioridade automática. Somente afastamentos registrados na aba própria bloqueiam a seleção na respectiva data.
                       </p>
                     </div>
                   </div>
@@ -1502,8 +1486,8 @@ export default function RosterApp() {
                   {/* Personnel table */}
                   <div className="col-span-12 lg:col-span-7 bg-slate-50/50 border border-slate-200 rounded-xl overflow-hidden flex flex-col">
                     <div className="px-5 py-3.5 border-b border-slate-200 bg-slate-100/60 flex justify-between items-center">
-                      <span className="font-bold text-slate-700 text-xs uppercase tracking-wider">Efetivo da Escala Vermelha</span>
-                      <span className="text-[11px] text-slate-400">Clique na função para alterar</span>
+                      <span className="font-bold text-slate-700 text-xs uppercase tracking-wider">Efetivo Cadastrado para Alocação Manual</span>
+                      <span className="text-[11px] text-slate-400">Referência cadastral; não limita a seleção</span>
                     </div>
                     <div className="overflow-x-auto max-h-[360px] overflow-y-auto">
                       <table className="w-full text-left border-collapse text-xs">
@@ -1516,7 +1500,7 @@ export default function RosterApp() {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-200/80 bg-white">
-                          {militaryList.filter(m => m.type !== 'EP').map(m => (
+                          {militaryList.map(m => (
                             <tr key={m.id} className="hover:bg-slate-50 transition-colors">
                               <td className="p-3">
                                 <div className="flex items-center gap-2.5">
@@ -1629,7 +1613,7 @@ export default function RosterApp() {
                       <h4 className="font-bold text-slate-800 text-sm">Resumo de Carga de Serviços</h4>
                     </div>
                     <p className="text-xs text-slate-500 leading-relaxed mb-4">
-                      Dados acumulados de serviços cumpridos para orientar o operador a balancear os plantões de fim de semana manualmente.
+                      Dados acumulados exibidos apenas para consulta. Eles não alteram, ordenam nem priorizam a seleção manual dos militares.
                     </p>
                     <div className="space-y-3">
                       <div className="p-3 bg-slate-50 rounded-lg flex justify-between items-center text-xs">
@@ -1662,14 +1646,12 @@ export default function RosterApp() {
                 <div className="lg:col-span-8 bg-white border border-slate-200 p-6 rounded-xl shadow-xs">
                   <div className="flex justify-between items-center mb-4">
                     <h4 className="font-bold text-slate-800 text-sm">Distribuição de Carga de Trabalho (Acumulado de Serviços)</h4>
-                    <span className="text-[10px] font-bold uppercase text-emerald-800 tracking-wider bg-emerald-50 border border-emerald-200/60 px-2 py-0.5 rounded-full">Ordem de Prioridade</span>
+                    <span className="text-[10px] font-bold uppercase text-emerald-800 tracking-wider bg-emerald-50 border border-emerald-200/60 px-2 py-0.5 rounded-full">Indicador Informativo</span>
                   </div>
                   
                   {/* Visual Bar Graph */}
                   <div className="space-y-3.5 max-h-[300px] overflow-y-auto pr-2">
-                    {[...militaryList]
-                      .sort((a, b) => a.dutyCount - b.dutyCount)
-                      .map(mil => {
+                    {militaryList.map(mil => {
                         const maxDuty = Math.max(...militaryList.map(m => m.dutyCount), 1);
                         const pct = (mil.dutyCount / maxDuty) * 100;
                         return (
@@ -2419,17 +2401,11 @@ export default function RosterApp() {
                   >
                     Permuta
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedAssignType('DISP')}
-                    className={cn(
-                      "flex-1 text-center py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all",
-                      selectedAssignType === 'DISP' ? "bg-slate-700 text-white shadow-xs" : "text-slate-500 hover:text-slate-800"
-                    )}
-                  >
-                    Dispensa / LTS
-                  </button>
                 </div>
+              </div>
+
+              <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-lg text-[11px] text-emerald-900 leading-relaxed">
+                Todos os militares sem afastamento vigente nesta data podem ser selecionados livremente. A lista não aplica prioridade ou bloqueio por função, contagem de serviços, tipo de escala, dia anterior ou dia seguinte.
               </div>
 
               {/* Quick Search */}
@@ -2458,6 +2434,7 @@ export default function RosterApp() {
 
                 {militaryList
                   .filter(mil => {
+                    if (isMilitaryAbsentOnDay(mil.id, selectedCell.day, absences)) return false;
                     if (!modalSearch) return true;
                     const query = modalSearch.toLowerCase();
                     return (
@@ -2467,20 +2444,7 @@ export default function RosterApp() {
                       mil.specialty.toLowerCase().includes(query)
                     );
                   })
-                  .sort((a, b) => {
-                    // Match selected post specialty first
-                    const aMatch = a.specialty === selectedCell.post || a.specialtySecondary === selectedCell.post ? 1 : 0;
-                    const bMatch = b.specialty === selectedCell.post || b.specialtySecondary === selectedCell.post ? 1 : 0;
-                    if (aMatch !== bMatch) return bMatch - aMatch;
-                    return a.dutyCount - b.dutyCount;
-                  })
                   .map(mil => {
-                    const otherPostAssigned = Object.keys(roster[selectedCell.day] || {}).find(
-                      p => p !== selectedCell.post && roster[selectedCell.day][p]?.militaryId === mil.id
-                    );
-                    const isOccupiedToday = !!otherPostAssigned;
-                    const isAbsent = isMilitaryAbsentOnDay(mil.id, selectedCell.day, absences);
-                    const isSpecialist = mil.specialty === selectedCell.post || mil.specialtySecondary === selectedCell.post;
 
                     return (
                       <button
@@ -2489,31 +2453,16 @@ export default function RosterApp() {
                         onClick={() => handleAssignMilitary(mil.id)}
                         className="w-full flex items-center justify-between p-2.5 rounded-lg border border-slate-200 bg-white hover:border-[#1e382b] hover:bg-slate-50 text-left text-xs transition-all cursor-pointer"
                       >
-                        <div className="flex items-center gap-2.5">
-                          <span className="w-7 h-7 rounded-md bg-slate-100 flex items-center justify-center font-bold font-mono text-[10px] text-slate-600 shrink-0">
-                            {mil.dutyCount}
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span className="w-7 h-7 rounded-md bg-slate-100 flex items-center justify-center font-bold text-[10px] text-slate-600 shrink-0">
+                            {mil.name.slice(0, 2).toUpperCase()}
                           </span>
-                          <div>
-                            <div className="flex items-center gap-1.5">
-                              <p className="font-semibold text-slate-900">{mil.rank}. {mil.fullName}</p>
-                              {isSpecialist && (
-                                <span className="text-[9px] font-bold bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded">
-                                  Especialista
-                                </span>
-                              )}
-                            </div>
-                            <p className="text-[10px] text-slate-500">
-                              {mil.specialty}
-                              {mil.specialtySecondary ? ` / ${mil.specialtySecondary}` : ''}
-                              {isAbsent && <span className="text-amber-600 font-semibold"> • Afastado</span>}
-                              {isOccupiedToday && <span className="text-blue-600 font-semibold"> • Escalado em {otherPostAssigned}</span>}
+                          <div className="min-w-0">
+                            <p className="font-semibold text-slate-900 truncate">{mil.rank}. {mil.fullName}</p>
+                            <p className="text-[10px] text-slate-500 truncate">
+                              {mil.name} • {mil.specialty}{mil.specialtySecondary ? ` / ${mil.specialtySecondary}` : ''}
                             </p>
                           </div>
-                        </div>
-                        <div className="text-right shrink-0">
-                          <span className="text-[10px] font-mono font-bold text-slate-400 block">
-                            {mil.dutyCount} sv
-                          </span>
                         </div>
                       </button>
                     );
