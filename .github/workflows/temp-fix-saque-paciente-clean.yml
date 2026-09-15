@@ -1,0 +1,30 @@
+name: Temporary patient meat requisition fix
+
+on:
+  push:
+    branches:
+      - fix/saque-carnes-pacientes-clean
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: fix/saque-carnes-pacientes-clean
+          fetch-depth: 0
+      - name: Apply correction
+        run: python scripts/temp_fix_saque_paciente_clean.py
+      - name: Regression check
+        run: node tests/saque-paciente-regression.mjs
+      - name: Commit correction
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add components/CardapioSemanal.tsx lib/persistence/validation.ts tests/saque-paciente-regression.mjs
+          git commit -m "Incluir proteínas dos pacientes no saque de carnes"
+          git push origin HEAD:fix/saque-carnes-pacientes-clean
