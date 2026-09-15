@@ -18,7 +18,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="pt-BR" className={`${inter.variable}`}>
-      <body className="font-sans antialiased text-slate-900 bg-slate-50/50" suppressHydrationWarning>
+      <body className="font-sans antialiased app-safe-body" suppressHydrationWarning>
         <AuthGate>
           {children}
           <DocumentExports />
