@@ -1,9 +1,15 @@
 /*
  * html2canvas 1.4.x não interpreta oklab/oklch/color-mix usados pelo Tailwind 4.
- * Esta camada é deliberadamente limitada às folhas oficiais exportadas para PDF.
- * O Cardápio só recebe as regras durante a geração (.pdf-rendering-active).
- * O Saque usa uma folha dedicada e recebe a paleta segura permanentemente.
+ * A raiz usa RGB explícito porque html2canvas consulta html/body antes de capturar
+ * qualquer elemento, mesmo quando o alvo já recebeu uma paleta compatível.
+ * As demais regras ficam limitadas às folhas oficiais exportadas para PDF.
  */
+
+html,
+body.app-safe-body {
+  color: #0f172a;
+  background-color: #f8fafc;
+}
 
 :is(
   #cardapio-print-sheet.pdf-rendering-active,
