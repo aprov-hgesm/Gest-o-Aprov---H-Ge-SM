@@ -158,11 +158,15 @@ export interface DayCardapio {
   colacaoPaciente: string; // Linha 2
   almoco: {
     geral: MealAlmocoGeral;
-    pacienteProteina: string; // e.g. 'PEITO DE FRANGO GRELHADO'
+    pacienteProteina: string; // Preparação exibida no cardápio do paciente
+    pacienteTipoCarne?: string; // Corte/matéria-prima para o Saque de Carnes
+    pacienteQuantidadeKg?: number | string; // Quantidade em kg para o Saque de Carnes
   };
   jantarPaciente: {
     prato: string;
     proteina?: string;
+    tipoCarne?: string; // Corte/matéria-prima para o Saque de Carnes
+    quantidadeKg?: number | string; // Quantidade em kg para o Saque de Carnes
   };
   ceia: string; // Linha 7
 }
@@ -266,6 +270,7 @@ export interface ItemSaqueProcessado {
   diaCardapioIso: string;
   diaSemanaCardapioLabel: string;
   preparacao: string;
+  origem: 'ALMOÇO GERAL' | 'ALMOÇO PACIENTE' | 'JANTAR PACIENTE';
   tipoCarne: string;
   quantidadeKg: number;
   diasAntecedencia: number;
@@ -318,62 +323,94 @@ export const calcularDataSaque = (dataCardapioIso: string, diasAntecedencia: num
 export const gerarListaSaqueCarnes = (dias: DayCardapio[]): ItemSaqueProcessado[] => {
   const lista: ItemSaqueProcessado[] = [];
 
+  const adicionarItem = (params: {
+    id: string;
+    dia: DayCardapio;
+    dayIdx: number;
+    preparacao: string;
+    origem: ItemSaqueProcessado['origem'];
+    tipoCarne?: string;
+    quantidadeKg?: number | string;
+    observacao?: string;
+    isAdicional?: boolean;
+  }) => {
+    if (!params.tipoCarne) return;
+    const regra = REGRAS_DESCONGELAMENTO[params.tipoCarne] || { diasAntecedencia: 2 };
+    const calc = calcularDataSaque(params.dia.date, regra.diasAntecedencia);
+    const qtd = Number(params.quantidadeKg) || 0;
+
+    lista.push({
+      id: params.id,
+      diaCardapioIso: params.dia.date,
+      diaSemanaCardapioLabel: params.dia.diaSemanaLabel,
+      preparacao: params.preparacao,
+      origem: params.origem,
+      tipoCarne: params.tipoCarne,
+      quantidadeKg: qtd,
+      diasAntecedencia: regra.diasAntecedencia,
+      dataSaqueIso: calc.dataSaqueIso,
+      dataSaqueFormatada: calc.dataSaqueFormatada,
+      diaSemanaSaque: calc.diaSemanaSaque,
+      ehFimDeSemana: calc.ehFimDeSemana,
+      observacao: params.observacao,
+      diaIndex: params.dayIdx,
+      isAdicional: params.isAdicional ?? false
+    });
+  };
+
   dias.forEach((dia, dayIdx) => {
-    // Carne principal do almoço geral
-    if (dia.almoco?.geral?.tipoCarne) {
-      const tipo = dia.almoco.geral.tipoCarne;
-      const regra = REGRAS_DESCONGELAMENTO[tipo] || { diasAntecedencia: 2 };
-      const calc = calcularDataSaque(dia.date, regra.diasAntecedencia);
-      const qtd = Number(dia.almoco.geral.quantidadeKg) || 0;
+    adicionarItem({
+      id: `saque-${dia.date}-almoco-geral`,
+      dia,
+      dayIdx,
+      preparacao: dia.almoco?.geral?.proteina || 'Proteína do almoço geral a definir',
+      origem: 'ALMOÇO GERAL',
+      tipoCarne: dia.almoco?.geral?.tipoCarne,
+      quantidadeKg: dia.almoco?.geral?.quantidadeKg
+    });
 
-      lista.push({
-        id: `saque-${dia.date}-principal`,
-        diaCardapioIso: dia.date,
-        diaSemanaCardapioLabel: dia.diaSemanaLabel,
-        preparacao: dia.almoco.geral.proteina || 'Proteína a definir',
-        tipoCarne: tipo,
-        quantidadeKg: qtd,
-        diasAntecedencia: regra.diasAntecedencia,
-        dataSaqueIso: calc.dataSaqueIso,
-        dataSaqueFormatada: calc.dataSaqueFormatada,
-        diaSemanaSaque: calc.diaSemanaSaque,
-        ehFimDeSemana: calc.ehFimDeSemana,
-        diaIndex: dayIdx,
-        isAdicional: false
+    dia.almoco?.geral?.carnesAdicionais?.forEach((adicional, adIdx) => {
+      adicionarItem({
+        id: `saque-${dia.date}-almoco-geral-adicional-${adIdx}`,
+        dia,
+        dayIdx,
+        preparacao: `${dia.almoco.geral.proteina || 'Almoço geral'} (Corte Adicional)`,
+        origem: 'ALMOÇO GERAL',
+        tipoCarne: adicional.tipoCarne,
+        quantidadeKg: adicional.quantidadeKg,
+        observacao: adicional.observacao,
+        isAdicional: true
       });
-    }
+    });
 
-    // Carnes adicionais (quando há mais de um corte no cardápio do dia)
-    if (dia.almoco?.geral?.carnesAdicionais && dia.almoco.geral.carnesAdicionais.length > 0) {
-      dia.almoco.geral.carnesAdicionais.forEach((adicional, adIdx) => {
-        if (adicional.tipoCarne) {
-          const regra = REGRAS_DESCONGELAMENTO[adicional.tipoCarne] || { diasAntecedencia: 2 };
-          const calc = calcularDataSaque(dia.date, regra.diasAntecedencia);
-          const qtd = Number(adicional.quantidadeKg) || 0;
+    adicionarItem({
+      id: `saque-${dia.date}-almoco-paciente`,
+      dia,
+      dayIdx,
+      preparacao: dia.almoco?.pacienteProteina || 'Proteína do almoço do paciente a definir',
+      origem: 'ALMOÇO PACIENTE',
+      tipoCarne: dia.almoco?.pacienteTipoCarne,
+      quantidadeKg: dia.almoco?.pacienteQuantidadeKg
+    });
 
-          lista.push({
-            id: `saque-${dia.date}-adicional-${adIdx}`,
-            diaCardapioIso: dia.date,
-            diaSemanaCardapioLabel: dia.diaSemanaLabel,
-            preparacao: `${dia.almoco.geral.proteina} (Corte Adicional)`,
-            tipoCarne: adicional.tipoCarne,
-            quantidadeKg: qtd,
-            diasAntecedencia: regra.diasAntecedencia,
-            dataSaqueIso: calc.dataSaqueIso,
-            dataSaqueFormatada: calc.dataSaqueFormatada,
-            diaSemanaSaque: calc.diaSemanaSaque,
-            ehFimDeSemana: calc.ehFimDeSemana,
-            observacao: adicional.observacao,
-            diaIndex: dayIdx,
-            isAdicional: true
-          });
-        }
-      });
-    }
+    adicionarItem({
+      id: `saque-${dia.date}-jantar-paciente`,
+      dia,
+      dayIdx,
+      preparacao: dia.jantarPaciente?.proteina || 'Proteína do jantar do paciente a definir',
+      origem: 'JANTAR PACIENTE',
+      tipoCarne: dia.jantarPaciente?.tipoCarne,
+      quantidadeKg: dia.jantarPaciente?.quantidadeKg
+    });
   });
 
-  // Ordenar cronologicamente pela data de saque (quando o despenseiro deve retirar da câmara fria)
-  lista.sort((a, b) => a.dataSaqueIso.localeCompare(b.dataSaqueIso));
+  lista.sort((a, b) => {
+    const byDate = a.dataSaqueIso.localeCompare(b.dataSaqueIso);
+    if (byDate !== 0) return byDate;
+    const byConsumptionDay = a.diaCardapioIso.localeCompare(b.diaCardapioIso);
+    if (byConsumptionDay !== 0) return byConsumptionDay;
+    return a.origem.localeCompare(b.origem);
+  });
 
   return lista;
 };
@@ -409,10 +446,14 @@ export const generateWeeklyDates = (mondayIso: string): DayCardapio[] => {
           bebida: 'suco',
           sobremesa: 'fruta ou sobremesa'
         },
-        pacienteProteina: i === 2 ? 'ALCATRA GRELHADA EM TIRAS' : 'PEITO FRANGO GRELHADO'
+        pacienteProteina: i === 2 ? 'ALCATRA GRELHADA EM TIRAS' : 'PEITO FRANGO GRELHADO',
+        pacienteTipoCarne: '',
+        pacienteQuantidadeKg: ''
       },
       jantarPaciente: {
         proteina: '',
+        tipoCarne: '',
+        quantidadeKg: '',
         prato: 'Arroz, feijão, ISCAS DE CARNE ACEBOLADA, legumes ao vapor, sopa de legumes, fruta'
       },
       ceia: 'Chá mate, pão francês com queijo, biscoito doce'
@@ -787,10 +828,14 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
           bebida: '',
           sobremesa: ''
         },
-        pacienteProteina: ''
+        pacienteProteina: '',
+        pacienteTipoCarne: '',
+        pacienteQuantidadeKg: ''
       },
       jantarPaciente: {
         proteina: '',
+        tipoCarne: '',
+        quantidadeKg: '',
         prato: ''
       },
       ceia: ''
@@ -1056,7 +1101,7 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
       text += `${idx + 1}. DATA DO SAQUE: ${item.dataSaqueFormatada} (${item.diaSemanaSaque})\n`;
       text += `   • Corte/Tipo: ${item.tipoCarne}\n`;
       text += `   • Quantidade: ${item.quantidadeKg > 0 ? `${item.quantidadeKg.toFixed(1)} kg` : 'A definir'}\n`;
-      text += `   • Consumo: ${item.diaSemanaCardapioLabel} (${formatDdmmyyyy(item.diaCardapioIso)}) - ${item.preparacao}\n`;
+      text += `   • Consumo: ${item.origem} — ${item.diaSemanaCardapioLabel} (${formatDdmmyyyy(item.diaCardapioIso)}) - ${item.preparacao}\n`;
       text += `   • Descongelamento: ${item.diasAntecedencia} dias de antecedência sob refrigeração\n\n`;
     });
 
@@ -1509,9 +1554,7 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
       {(() => {
         const listaProteinasSemana = gerarListaSaqueCarnes(currentCardapio.dias);
         const totalKgProteinas = listaProteinasSemana.reduce((total, item) => total + item.quantidadeKg, 0);
-        const diasComSaqueCompleto = currentCardapio.dias.filter(dia =>
-          Boolean(dia.almoco.geral.tipoCarne) && Number(dia.almoco.geral.quantidadeKg) > 0
-        ).length;
+        const itensSaqueProgramados = listaProteinasSemana.filter(item => item.tipoCarne && item.quantidadeKg > 0).length;
 
         return (
           <div className="no-print bg-white border border-slate-200 rounded-xl p-4 shadow-2xs">
@@ -1528,13 +1571,8 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
                 </div>
               </div>
               <div className="flex items-center gap-2 text-[10px] font-bold">
-                <span className={cn(
-                  "px-2 py-1 rounded-full border",
-                  diasComSaqueCompleto === currentCardapio.dias.length
-                    ? "bg-emerald-50 text-emerald-800 border-emerald-200"
-                    : "bg-amber-50 text-amber-900 border-amber-200"
-                )}>
-                  {diasComSaqueCompleto}/{currentCardapio.dias.length} dias completos
+                <span className="px-2 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200">
+                  {itensSaqueProgramados} itens de carne programados
                 </span>
                 <span className="px-2 py-1 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
                   {totalKgProteinas.toFixed(1)} kg programados
@@ -2832,6 +2870,46 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
                       </button>
                     ))}
                   </div>
+
+                  <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3 p-3 rounded-lg bg-amber-50/70 border border-amber-300">
+                    <div className="md:col-span-2 space-y-1">
+                      <label className="text-[10px] font-black text-amber-950 uppercase tracking-wide block">Corte / Matéria-Prima — Almoço Paciente</label>
+                      <select
+                        value={currentCardapio.dias[editingDayIndex].almoco.pacienteTipoCarne || ''}
+                        onChange={e => {
+                          const updated = JSON.parse(JSON.stringify(currentCardapio)) as WeeklyCardapioDoc;
+                          updated.dias[editingDayIndex].almoco.pacienteTipoCarne = e.target.value;
+                          updateCurrentCardapio(updated);
+                        }}
+                        className="w-full px-3 py-2 border-2 border-amber-400 rounded-lg text-xs font-bold bg-white text-slate-900 focus:ring-2 focus:ring-amber-500 outline-none"
+                      >
+                        <option value="">-- Selecione o Tipo da Carne --</option>
+                        {TIPOS_CARNE_OPCOES.map(opcao => (
+                          <option key={`paciente-almoco-${opcao}`} value={opcao}>{opcao} ({REGRAS_DESCONGELAMENTO[opcao]?.diasAntecedencia || 2}d de antecedência)</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-amber-950 uppercase tracking-wide block">Quantidade (Kg)</label>
+                      <div className="relative">
+                        <input
+                          type="number"
+                          step="0.5"
+                          min="0"
+                          value={currentCardapio.dias[editingDayIndex].almoco.pacienteQuantidadeKg ?? ''}
+                          onChange={e => {
+                            const updated = JSON.parse(JSON.stringify(currentCardapio)) as WeeklyCardapioDoc;
+                            updated.dias[editingDayIndex].almoco.pacienteQuantidadeKg = e.target.value === '' ? '' : parseFloat(e.target.value);
+                            updateCurrentCardapio(updated);
+                          }}
+                          className="w-full pl-3 pr-8 py-2 border-2 border-amber-400 rounded-lg text-xs font-black bg-white text-amber-950 focus:ring-2 focus:ring-amber-500 outline-none"
+                          placeholder="Ex: 8"
+                        />
+                        <span className="absolute right-2.5 top-2.5 text-xs font-black text-amber-800">kg</span>
+                      </div>
+                    </div>
+                    <p className="md:col-span-3 text-[10px] text-amber-800 font-medium">Estes dados entram automaticamente no Saque de Carnes como <strong>ALMOÇO PACIENTE</strong> e não alteram a descrição impressa no cardápio A4.</p>
+                  </div>
                 </div>
               </div>
 
@@ -2886,6 +2964,46 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
                         {p}
                       </button>
                     ))}
+                  </div>
+
+                  <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3 p-3 rounded-lg bg-amber-50/70 border border-amber-300">
+                    <div className="md:col-span-2 space-y-1">
+                      <label className="text-[10px] font-black text-amber-950 uppercase tracking-wide block">Corte / Matéria-Prima — Jantar Paciente</label>
+                      <select
+                        value={currentCardapio.dias[editingDayIndex].jantarPaciente.tipoCarne || ''}
+                        onChange={e => {
+                          const updated = JSON.parse(JSON.stringify(currentCardapio)) as WeeklyCardapioDoc;
+                          updated.dias[editingDayIndex].jantarPaciente.tipoCarne = e.target.value;
+                          updateCurrentCardapio(updated);
+                        }}
+                        className="w-full px-3 py-2 border-2 border-amber-400 rounded-lg text-xs font-bold bg-white text-slate-900 focus:ring-2 focus:ring-amber-500 outline-none"
+                      >
+                        <option value="">-- Selecione o Tipo da Carne --</option>
+                        {TIPOS_CARNE_OPCOES.map(opcao => (
+                          <option key={`paciente-jantar-${opcao}`} value={opcao}>{opcao} ({REGRAS_DESCONGELAMENTO[opcao]?.diasAntecedencia || 2}d de antecedência)</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-amber-950 uppercase tracking-wide block">Quantidade (Kg)</label>
+                      <div className="relative">
+                        <input
+                          type="number"
+                          step="0.5"
+                          min="0"
+                          value={currentCardapio.dias[editingDayIndex].jantarPaciente.quantidadeKg ?? ''}
+                          onChange={e => {
+                            const updated = JSON.parse(JSON.stringify(currentCardapio)) as WeeklyCardapioDoc;
+                            updated.dias[editingDayIndex].jantarPaciente.quantidadeKg = e.target.value === '' ? '' : parseFloat(e.target.value);
+                            updateCurrentCardapio(updated);
+                          }}
+                          className="w-full pl-3 pr-8 py-2 border-2 border-amber-400 rounded-lg text-xs font-black bg-white text-amber-950 focus:ring-2 focus:ring-amber-500 outline-none"
+                          placeholder="Ex: 10"
+                        />
+                        <span className="absolute right-2.5 top-2.5 text-xs font-black text-amber-800">kg</span>
+                      </div>
+                    </div>
+                    <p className="md:col-span-3 text-[10px] text-amber-800 font-medium">Estes dados entram automaticamente no Saque de Carnes como <strong>JANTAR PACIENTE</strong> e não alteram a descrição impressa no cardápio A4.</p>
                   </div>
                 </div>
 
@@ -3568,7 +3686,7 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
                                       {item.diaSemanaCardapioLabel} ({formatDdmmyyyy(item.diaCardapioIso)})
                                     </div>
                                     <div className="text-slate-700 uppercase font-semibold text-[9.5px]">
-                                      Almoço: {item.preparacao}
+                                      {item.origem}: {item.preparacao}
                                     </div>
                                   </td>
 
