@@ -18,10 +18,11 @@ jobs:
           ref: fix/saque-carnes-pacientes-final
           fetch-depth: 0
       - name: Apply correction
-        run: python scripts/temp_fix_saque_paciente.py
+        run: python scripts/run_temp_fix_saque_paciente.py
       - name: Commit correction
         run: |
           rm scripts/temp_fix_saque_paciente.py
+          rm scripts/run_temp_fix_saque_paciente.py
           rm .github/workflows/temp-fix-saque-paciente.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
