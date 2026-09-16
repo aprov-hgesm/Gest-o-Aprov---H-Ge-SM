@@ -39,6 +39,7 @@ export interface SwapRecord {
   originalMilitaryId: string;
   originalMilitaryName: string;
   originalRank: string;
+  originalType: 'EP' | 'EV' | 'PERM' | 'DISP';
   replacementMilitaryId: string;
   replacementMilitaryName: string;
   replacementRank: string;
