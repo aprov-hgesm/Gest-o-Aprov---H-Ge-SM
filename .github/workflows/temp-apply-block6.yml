@@ -1,0 +1,46 @@
+name: Apply Block 6 Operational Closure
+on:
+  push:
+    branches:
+      - feature/bloco6-fechamento-operacional
+permissions:
+  contents: write
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: feature/bloco6-fechamento-operacional
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.2'
+      - name: Aplicar integração do Bloco 6
+        run: python scripts/apply_block6.py
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+      - name: TypeScript
+        run: bun run typecheck
+      - name: Block 6 domain tests
+        run: node --test tests/block6-operational-closure.test.ts
+      - name: Block 6 structural smoke
+        run: node tests/block6-ui-smoke.mjs
+      - name: Production build
+        run: bun run build
+        env:
+          NODE_ENV: production
+      - name: Commit validated Block 6 integration
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add components/CardapioSemanal.tsx lib/domain/cardapio-closure.ts lib/persistence/validation.ts tests/block6-operational-closure.test.ts tests/block6-ui-smoke.mjs
+          git rm scripts/apply_block6.py
+          git commit -m "Integrar fechamento operacional do Cardápio"
+          git push origin HEAD:feature/bloco6-fechamento-operacional
