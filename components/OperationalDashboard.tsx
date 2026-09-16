@@ -22,7 +22,7 @@ import { gerarListaSaqueCarnes, type WeeklyCardapioDoc } from '@/components/Card
 import OperationalCalendar from '@/components/OperationalCalendar';
 import type { OperationalCalendarDay } from '@/lib/domain/operational-calendar';
 
-export type OperationalTab = 'inicio' | 'dashboard' | 'efetivo' | 'afastamentos' | 'cardapio';
+export type OperationalTab = 'inicio' | 'dashboard' | 'efetivo' | 'afastamentos' | 'cardapio' | 'profissional';
 
 export interface OperationalMilitary {
   id: string;
@@ -105,7 +105,7 @@ function formatLongDate(iso: string) {
 }
 
 function pickOperationalCardapio(cardapios: WeeklyCardapioDoc[], today: string) {
-  const sorted = [...cardapios].sort((a, b) => a.dataInicio.localeCompare(b.dataInicio));
+  const sorted = cardapios.filter(item => !item.archivedAt).sort((a, b) => a.dataInicio.localeCompare(b.dataInicio));
   const active = sorted.find(item => item.dataInicio <= today && item.dataFim >= today);
   if (active) return { cardapio: active, upcoming: false };
   const next = sorted.find(item => item.dataInicio > today);

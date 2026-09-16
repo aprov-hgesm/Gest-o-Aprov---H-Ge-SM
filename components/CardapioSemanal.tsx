@@ -38,6 +38,7 @@ import SyncStatus from '@/components/SyncStatus';
 import { useCloudData } from '@/hooks/use-cloud-data';
 import { validateCardapio } from '@/lib/persistence/validation';
 import { getCardapioReadiness } from '@/lib/domain/cardapio-readiness';
+import type { AuditEvent } from '@/lib/domain/professional-flows';
 
 // Quick meal presets for fast editing
 const PRESET_PROTEINAS = [
@@ -190,6 +191,15 @@ export interface CardapioWorkflow {
   };
 }
 
+export interface CardapioVersionSnapshot {
+  id: string;
+  version: number;
+  createdAt: string;
+  reason: string;
+  workflowStatus: WorkflowStatus;
+  snapshot: string;
+}
+
 export interface WeeklyCardapioDoc {
   id: string; // 'cardapio-2026-09-14'
   dataInicio: string; // '2026-09-14' (Monday)
@@ -217,6 +227,25 @@ export interface WeeklyCardapioDoc {
   };
 
   dias: DayCardapio[];
+
+  version?: number;
+  versions?: CardapioVersionSnapshot[];
+  archivedAt?: string;
+  archiveReason?: string;
+  lastChangeReason?: string;
+}
+
+export function createCardapioVersionSnapshot(doc: WeeklyCardapioDoc, reason: string): CardapioVersionSnapshot {
+  const version = doc.version || 1;
+  const cleanSnapshot = JSON.parse(JSON.stringify({ ...doc, versions: undefined })) as WeeklyCardapioDoc;
+  return {
+    id: `version-${doc.id}-${version}-${Date.now()}`,
+    version,
+    createdAt: new Date().toISOString(),
+    reason,
+    workflowStatus: doc.workflow.status,
+    snapshot: JSON.stringify(cleanSnapshot)
+  };
 }
 
 // =========================================================================
@@ -720,6 +749,7 @@ export const initialWeeklyCardapio: WeeklyCardapioDoc = {
 
 interface CardapioSemanalProps {
   onNotify?: (msg: string, type?: 'success' | 'info') => void;
+  onAudit?: (event: Omit<AuditEvent, 'id' | 'createdAt'>) => void;
 }
 
 const initialCardapioDocuments = [initialWeeklyCardapio];
@@ -728,7 +758,7 @@ function readLegacyCardapios(): WeeklyCardapioDoc[] | null {
   return raw === null ? null : JSON.parse(raw);
 }
 
-export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
+export default function CardapioSemanal({ onNotify, onAudit }: CardapioSemanalProps) {
   const cardapioCloud = useCloudData({
     name: 'cardapios', initial: initialCardapioDocuments,
     validate: validateCardapio, legacy: readLegacyCardapios
@@ -867,9 +897,13 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
     }
   };
 
-  // Update current cardapio helper
+  // Update current cardapio helper with preservation of reviewed/finalized versions.
   const updateCurrentCardapio = (updated: WeeklyCardapioDoc) => {
     const persisted = cardapiosList.find(c => c.id === updated.id);
+    if (persisted?.archivedAt) {
+      showToast('Cardápio arquivado está em modo somente leitura. Restaure-o em Fluxos Profissionais antes de alterar.', 'info');
+      return false;
+    }
     if (persisted?.workflow.status === 'FINALIZADO' && updated.workflow.status !== 'EM_ELABORACAO') {
       showToast('Cardápio finalizado está bloqueado para edição. Reabra o documento antes de alterar.', 'info');
       return false;
@@ -879,20 +913,34 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
     const editedAfterReview = persisted &&
       (persisted.workflow.status === 'CONFERIDO' || persisted.workflow.status === 'APROVADO') &&
       updated.workflow.status === persisted.workflow.status;
-    if (editedAfterReview) {
+    if (editedAfterReview && persisted) {
       candidate = JSON.parse(JSON.stringify(updated)) as WeeklyCardapioDoc;
+      const snapshot = createCardapioVersionSnapshot({ ...persisted, version: persisted.version || 1 }, 'Estado preservado antes de alteração após conferência/aprovação');
+      candidate.version = (persisted.version || 1) + 1;
+      candidate.versions = [snapshot, ...(persisted.versions || [])];
+      candidate.lastChangeReason = 'Alteração de conteúdo após conferência/aprovação';
       candidate.workflow.status = 'EM_ELABORACAO';
       candidate.workflow.conferido.status = 'PENDENTE';
       candidate.workflow.conferido.data = undefined;
       candidate.workflow.aprovado.status = 'PENDENTE';
       candidate.workflow.aprovado.data = undefined;
-      showToast('Alteração no conteúdo reabriu o cardápio para nova conferência.', 'info');
+      showToast('Alteração no conteúdo criou nova versão e reabriu o cardápio para conferência.', 'info');
     }
 
     const updatedList = cardapiosList.some(c => c.id === candidate.id)
       ? cardapiosList.map(c => c.id === candidate.id ? candidate : c)
       : [candidate, ...cardapiosList];
-    return saveCardapios(updatedList, candidate.id);
+    const saved = saveCardapios(updatedList, candidate.id);
+    if (saved && editedAfterReview && persisted) {
+      onAudit?.({
+        module: 'Cardápio', action: 'REABERTURA', entityType: 'Cardápio', entityId: persisted.id,
+        summary: `Cardápio ${persisted.dataInicio} a ${persisted.dataFim} reaberto automaticamente após alteração de conteúdo.`,
+        previousValue: `Versão ${persisted.version || 1} / ${persisted.workflow.status}`,
+        newValue: `Versão ${(persisted.version || 1) + 1} / EM_ELABORACAO`,
+        note: 'Alteração de conteúdo após conferência/aprovação'
+      });
+    }
+    return saved;
   };
 
   // Advance workflow state
@@ -926,22 +974,50 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
     } else if (currentStatus === 'APROVADO') {
       nextStatus = 'FINALIZADO';
       updated.workflow.status = nextStatus;
-      message = 'Cardápio FINALIZADO e pronto para publicação oficial.';
+      updated.version = currentCardapio.version || 1;
+      const snapshot = createCardapioVersionSnapshot(updated, 'Finalização oficial do cardápio');
+      updated.versions = [snapshot, ...(currentCardapio.versions || []).filter(item => item.version !== snapshot.version)];
+      message = 'Cardápio FINALIZADO e versão oficial preservada.';
     }
 
     if (!updateCurrentCardapio(updated)) return;
+    if (currentStatus !== nextStatus) {
+      onAudit?.({
+        module: 'Cardápio',
+        action: nextStatus === 'FINALIZADO' ? 'FINALIZACAO' : 'ALTERACAO',
+        entityType: 'Cardápio', entityId: currentCardapio.id,
+        summary: `Fluxo do cardápio ${currentCardapio.dataInicio} a ${currentCardapio.dataFim}: ${currentStatus} → ${nextStatus}.`,
+        previousValue: currentStatus, newValue: nextStatus
+      });
+    }
     if (message) showToast(message);
   };
 
   const handleReopenWorkflow = () => {
+    const reason = window.prompt('Informe o motivo da reabertura do cardápio:');
+    if (!reason?.trim()) {
+      showToast('A reabertura exige um motivo para preservar a rastreabilidade.', 'info');
+      return;
+    }
     const updated = JSON.parse(JSON.stringify(currentCardapio)) as WeeklyCardapioDoc;
+    const previousVersion = currentCardapio.version || 1;
+    const snapshot = createCardapioVersionSnapshot({ ...currentCardapio, version: previousVersion }, `Estado preservado antes da reabertura: ${reason.trim()}`);
+    updated.version = previousVersion + 1;
+    updated.versions = [snapshot, ...(currentCardapio.versions || []).filter(item => item.id !== snapshot.id)];
+    updated.lastChangeReason = reason.trim();
     updated.workflow.status = 'EM_ELABORACAO';
     updated.workflow.conferido.status = 'PENDENTE';
     updated.workflow.conferido.data = undefined;
     updated.workflow.aprovado.status = 'PENDENTE';
     updated.workflow.aprovado.data = undefined;
     if (!updateCurrentCardapio(updated)) return;
-    showToast('Cardápio reaberto para edição (Em Elaboração).', 'info');
+    onAudit?.({
+      module: 'Cardápio', action: 'REABERTURA', entityType: 'Cardápio', entityId: currentCardapio.id,
+      summary: `Cardápio reaberto como versão ${previousVersion + 1}.`,
+      previousValue: `Versão ${previousVersion} / ${currentCardapio.workflow.status}`,
+      newValue: `Versão ${previousVersion + 1} / EM_ELABORACAO`, note: reason.trim()
+    });
+    showToast(`Cardápio reaberto como versão ${previousVersion + 1}.`, 'info');
   };
 
   // Handle official PDF generation and download in A4 Landscape
@@ -1189,6 +1265,8 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
       id: newId,
       dataInicio: nextMonIso,
       dataFim: nextSunIso,
+      version: 1,
+      versions: [],
       workflow: {
         status: 'EM_ELABORACAO',
         conferido: {
@@ -1244,6 +1322,8 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
       regiaoMilitar: '3ª REGIÃO MILITAR',
       organizacaoMilitar: 'HOSPITAL GERAL DE SANTA MARIA',
       divisao: 'APROVISIONAMENTO',
+      version: 1,
+      versions: [],
       workflow: {
         status: 'EM_ELABORACAO',
         conferido: {
