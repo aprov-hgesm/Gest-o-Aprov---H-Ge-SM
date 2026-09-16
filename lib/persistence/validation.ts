@@ -78,3 +78,16 @@ export function validateCardapio(value: unknown): boolean {
     object(workflow.conferido) && strings(workflow.conferido, ['cargo', 'responsavel', 'status']) &&
     object(workflow.aprovado) && strings(workflow.aprovado, ['cargo', 'responsavel', 'status']);
 }
+
+const saqueHistory = (value: unknown) => object(value) &&
+  strings(value, ['status', 'at']) &&
+  ['PENDENTE', 'SEPARADO', 'RETIRADO'].includes(String(value.status)) &&
+  optional(value, 'note', 'string');
+
+export function validateSaqueOperational(value: unknown): boolean {
+  return object(value) &&
+    strings(value, ['id', 'cardapioId', 'saqueItemId', 'status', 'updatedAt']) &&
+    ['PENDENTE', 'SEPARADO', 'RETIRADO'].includes(String(value.status)) &&
+    optional(value, 'note', 'string') &&
+    list(value.history, saqueHistory);
+}
