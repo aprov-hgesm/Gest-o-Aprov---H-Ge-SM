@@ -22,7 +22,9 @@ export function useCloudData<T extends Identified>({ name, initial, validate, le
     const created = new SyncController({
       initial, validate, legacy, storage: () => window.localStorage,
       storageKey: 'gestao-aprov:firestore:v1:' + name,
-      legacyKeys: name === 'roster' ? ['dr_military', 'dr_absences', 'dr_roster', 'dr_logs', 'dr_holidays'] : ['dr_cardapios'],
+      legacyKeys: name === 'roster'
+        ? ['dr_military', 'dr_absences', 'dr_roster', 'dr_logs', 'dr_holidays']
+        : name === 'cardapios' ? ['dr_cardapios'] : [],
       port: firestorePort<T>(db, name, validate)
     });
     if (typeof window !== 'undefined') controllers.set(name, created);
