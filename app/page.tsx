@@ -908,9 +908,19 @@ export default function RosterApp() {
 
     const updatedRoster = clean(roster);
     Object.keys(updatedRoster).forEach(day => {
+      const dayISO = ddmmyyyyToIso(day);
+      const wasCoveredByThisAbsence = dayISO >= abs.startDate && (abs.indefinite || dayISO <= abs.endDate);
+      const coveredByAnotherAbsence = isMilitaryAbsentOnDate(
+        updatedAbsences.filter(item => item.id !== id),
+        abs.militaryId,
+        dayISO
+      );
       Object.keys(updatedRoster[day]).forEach(post => {
         const cell = updatedRoster[day][post];
-        if (cell && cell.militaryId === abs.militaryId && cell.type === 'DISP') updatedRoster[day][post] = null;
+        if (
+          cell && cell.militaryId === abs.militaryId && cell.type === 'DISP' &&
+          dayISO >= today && wasCoveredByThisAbsence && !coveredByAnotherAbsence
+        ) updatedRoster[day][post] = null;
       });
     });
 

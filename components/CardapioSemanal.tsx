@@ -874,10 +874,25 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
       showToast('Cardápio finalizado está bloqueado para edição. Reabra o documento antes de alterar.', 'info');
       return false;
     }
-    const updatedList = cardapiosList.some(c => c.id === updated.id)
-      ? cardapiosList.map(c => c.id === updated.id ? updated : c)
-      : [updated, ...cardapiosList];
-    return saveCardapios(updatedList, updated.id);
+
+    let candidate = updated;
+    const editedAfterReview = persisted &&
+      (persisted.workflow.status === 'CONFERIDO' || persisted.workflow.status === 'APROVADO') &&
+      updated.workflow.status === persisted.workflow.status;
+    if (editedAfterReview) {
+      candidate = JSON.parse(JSON.stringify(updated)) as WeeklyCardapioDoc;
+      candidate.workflow.status = 'EM_ELABORACAO';
+      candidate.workflow.conferido.status = 'PENDENTE';
+      candidate.workflow.conferido.data = undefined;
+      candidate.workflow.aprovado.status = 'PENDENTE';
+      candidate.workflow.aprovado.data = undefined;
+      showToast('Alteração no conteúdo reabriu o cardápio para nova conferência.', 'info');
+    }
+
+    const updatedList = cardapiosList.some(c => c.id === candidate.id)
+      ? cardapiosList.map(c => c.id === candidate.id ? candidate : c)
+      : [candidate, ...cardapiosList];
+    return saveCardapios(updatedList, candidate.id);
   };
 
   // Advance workflow state
