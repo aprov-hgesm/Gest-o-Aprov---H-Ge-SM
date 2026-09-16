@@ -60,17 +60,16 @@ export const defaultAdminSettings: AdminSettings = {
   rosterPosts: [
     'Cozinheiro de Dia',
     'Copeiro de Dia',
-    'Ceia de Dia',
-    'Auxiliar do Copeiro de Dia'
+    'Auxiliar do Copeiro de Dia',
+    'Ceia de Dia'
   ],
   absenceTypes: [
     'Férias',
-    'LTS',
-    'Dispensa',
-    'Baixado',
-    'Missão',
-    'Curso',
-    'Outro'
+    'LTS / Atestado Médico',
+    'Curso / Estágio',
+    'Missão Externa',
+    'Dispensa Recompensa',
+    'Núpcias / Luto'
   ],
   specialties: [
     'Cozinheiro de Dia',
@@ -78,7 +77,7 @@ export const defaultAdminSettings: AdminSettings = {
     'Auxiliar do Copeiro de Dia',
     'Ceia de Dia'
   ],
-  ranks: ['Cb', 'Sd'],
+  ranks: ['Ten', 'Sgt', 'Cb', 'Sd'],
   historyRetentionLimit: 1500
 };
 
