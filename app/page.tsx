@@ -330,11 +330,17 @@ const getDayDetails = (dayKey: string, customHolidays: HolidayDate[] = []) => {
 
 const generateWeekendAndHolidayDays = (
   customHolidays: HolidayDate[] = initialHolidays,
-  startMonthIso: string = '2026-09-01',
-  endMonthIso: string = '2026-12-31'
+  startMonthIso?: string,
+  endMonthIso?: string
 ): string[] => {
-  const [sy, sm, sd] = startMonthIso.split('-').map(Number);
-  const [ey, em, ed] = endMonthIso.split('-').map(Number);
+  const now = new Date();
+  const defaultStart = `${localIsoDate(now).slice(0, 8)}01`;
+  const future = new Date(now.getFullYear(), now.getMonth() + 6, 0);
+  const defaultEnd = localIsoDate(future);
+  const rangeStart = startMonthIso || defaultStart;
+  const rangeEnd = endMonthIso || defaultEnd;
+  const [sy, sm, sd] = rangeStart.split('-').map(Number);
+  const [ey, em, ed] = rangeEnd.split('-').map(Number);
   const curr = new Date(sy, (sm || 1) - 1, sd || 1);
   const end = new Date(ey, (em || 1) - 1, ed || 1);
 
@@ -359,7 +365,7 @@ const generateWeekendAndHolidayDays = (
 
   // Also include any holidays explicitly registered
   customHolidays.forEach(h => {
-    if (h.date) {
+    if (h.date && h.date >= rangeStart && h.date <= rangeEnd) {
       daysSet.add(isoToDdmmyyyy(h.date));
     }
   });
@@ -636,7 +642,12 @@ export default function RosterApp() {
     if (!window.confirm('Deseja realmente desmarcar todas as alocações da escala? Todos os postos ficarão vagos para alocação manual.')) {
       return;
     }
-    const emptyRoster = createEmptyRoster(daysToShow);
+    const emptyRoster = Object.fromEntries(
+      Object.entries(roster).map(([day, posts]) => [
+        day,
+        Object.fromEntries(Object.keys(posts).map(post => [post, null]))
+      ])
+    ) as WeekRoster;
     const resetMilList = militaryList.map(mil => ({ ...mil, dutyCount: 0 }));
     const resetLogs = addLog('Todas as designações da escala foram desmarcadas para operação manual.', changelogs);
     if (!saveState(resetMilList, absences, emptyRoster, resetLogs, customHolidays)) return;
@@ -675,30 +686,23 @@ export default function RosterApp() {
     showToast(`${newMilRank}. ${newMilName} cadastrado com sucesso!`);
   };
 
-  // CRUD: Delete military personnel and clean up rosters
+  // Excluir somente cadastros sem histórico operacional; vínculos históricos devem ser preservados.
   const handleDeleteMilitary = (id: string) => {
     const target = militaryList.find(m => m.id === id);
     if (!target) return;
-
-    if (window.confirm(`Tem certeza que deseja excluir o militar ${target.rank}. ${target.name}?`)) {
-      const updatedMil = militaryList.filter(m => m.id !== id);
-      const updatedAbs = absences.filter(a => a.militaryId !== id);
-
-      // Clean slots in roster
-      const updatedRoster = clean(roster);
-      Object.keys(updatedRoster).forEach(day => {
-        Object.keys(updatedRoster[day]).forEach(post => {
-          const cell = updatedRoster[day][post];
-          if (cell && cell.militaryId === id) {
-            updatedRoster[day][post] = null;
-          }
-        });
-      });
-
-      let logsList = addLog(`Militar excluído do sistema: ${target.rank}. ${target.name}.`);
-      if (!saveState(updatedMil, updatedAbs, updatedRoster, logsList)) return;
-      showToast(`Militar ${target.name} removido com sucesso.`);
+    const hasAbsenceHistory = absences.some(a => a.militaryId === id);
+    const hasRosterHistory = Object.values(roster).some(day =>
+      Object.values(day).some(cell => cell?.militaryId === id)
+    );
+    if (hasAbsenceHistory || hasRosterHistory) {
+      showToast(`O cadastro de ${target.rank}. ${target.name} possui histórico de escala ou afastamento e não pode ser excluído. Edite o cadastro para preservar a rastreabilidade.`, 'info');
+      return;
     }
+    if (!window.confirm(`Tem certeza que deseja excluir o militar ${target.rank}. ${target.name}?`)) return;
+    const updatedMil = militaryList.filter(m => m.id !== id);
+    const logsList = addLog(`Cadastro sem histórico excluído: ${target.rank}. ${target.name}.`);
+    if (!saveState(updatedMil, absences, roster, logsList)) return;
+    showToast(`Militar ${target.name} removido com sucesso.`);
   };
 
   // CRUD: Save edit of military personnel and synchronize with roster and absences
@@ -826,6 +830,11 @@ export default function RosterApp() {
 
     const today = localIsoDate();
     const startDate = absenceStart || today;
+    const plannedEndDate = absenceEnd || today;
+    if (!absenceIndefinite && plannedEndDate < startDate) {
+      showToast('A data final do afastamento não pode ser anterior à data inicial.', 'info');
+      return;
+    }
     const newAbsence: Absence = {
       id: `afast-${Date.now()}`,
       militaryId: mil.id,
@@ -833,7 +842,7 @@ export default function RosterApp() {
       rank: mil.rank,
       type: absenceType,
       startDate,
-      endDate: absenceIndefinite ? 'Indefinido' : absenceEnd || today,
+      endDate: absenceIndefinite ? 'Indefinido' : plannedEndDate,
       indefinite: absenceIndefinite,
       notes: absenceNotes,
       autoUpdate: absenceAutoUpdate,
@@ -933,9 +942,9 @@ export default function RosterApp() {
       return acc;
     }, new Set<string>()).size;
 
-  const totalMedicalAway = absences.filter(a =>
+  const totalMedicalAway = new Set(absences.filter(a =>
     resolveAbsenceStatus(a) === 'ATIVO' && (a.type.includes('LTS') || a.type.includes('Atestado'))
-  ).length;
+  ).map(a => a.militaryId)).size;
   const pendingSwaps = Object.values(roster)
     .flatMap(dayObj => Object.values(dayObj))
     .filter(cell => cell && cell.type === 'PERM').length;

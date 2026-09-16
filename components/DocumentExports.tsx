@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { FileDown, X } from 'lucide-react';
 import jsPDF from 'jspdf';
-import { normalizeMilitaryStatuses, resolveAbsenceStatus } from '@/lib/domain/roster-integrity';
+import { normalizeMilitaryStatuses, resolveAbsenceStatus, rosterCompliance } from '@/lib/domain/roster-integrity';
 
 type ScaleType = 'EP' | 'EV' | 'Ambas';
 
@@ -275,7 +275,13 @@ function exportAbsences(data: RosterDocument) {
   const active = data.absences.filter(item => resolveAbsenceStatus(item) === 'ATIVO').length;
   let y = addHeader(pdf, 'RELATÓRIO DE AFASTAMENTOS', `${active} ativo(s) de ${data.absences.length} registro(s)`);
   const rows = [...data.absences]
-    .sort((a, b) => (a.status === b.status ? isoFromDate(a.startDate).localeCompare(isoFromDate(b.startDate)) : a.status === 'ATIVO' ? -1 : 1))
+    .sort((a, b) => {
+      const statusA = resolveAbsenceStatus(a);
+      const statusB = resolveAbsenceStatus(b);
+      if (statusA === statusB) return isoFromDate(a.startDate).localeCompare(isoFromDate(b.startDate));
+      const order = { ATIVO: 0, AGENDADO: 1, ENCERRADO: 2, CANCELADO: 3 } as const;
+      return order[statusA] - order[statusB];
+    })
     .map(item => [
       `${item.rank}. ${item.militaryName}`,
       item.type,
@@ -299,9 +305,7 @@ function exportGeneralReport(data: RosterDocument) {
   const activeMilitary = normalizedMilitary.filter(item => item.status === 'Ativo').length;
   const awayMilitary = normalizedMilitary.filter(item => item.status === 'Afastado').length;
   const activeAbsences = data.absences.filter(item => resolveAbsenceStatus(item) === 'ATIVO').length;
-  const allSlots = Object.values(data.roster).flatMap(day => Object.values(day));
-  const filledSlots = allSlots.filter(Boolean).length;
-  const occupation = allSlots.length ? Math.round((filledSlots / allSlots.length) * 100) : 0;
+  const { rate: occupation } = rosterCompliance(data.roster);
 
   let y = addHeader(pdf, 'RELATÓRIO GERAL DE APROVISIONAMENTO', 'Efetivo, afastamentos, escala e histórico operacional');
   pdf.setFont('helvetica', 'bold');
