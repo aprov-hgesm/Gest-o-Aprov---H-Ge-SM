@@ -46,7 +46,12 @@ type CardapioLike = {
 const blank = (value: unknown) => typeof value !== 'string' || value.trim().length === 0;
 const positive = (value: unknown) => Number(value) > 0;
 
-function checkMeatPair(missing: string[], label: string, cut: unknown, quantity: unknown) {
+function checkRequiredMeat(missing: string[], label: string, cut: unknown, quantity: unknown) {
+  if (blank(cut)) missing.push(`${label}: selecione o corte/matéria-prima`);
+  if (!positive(quantity)) missing.push(`${label}: informe a quantidade em kg`);
+}
+
+function checkOptionalMeatPair(missing: string[], label: string, cut: unknown, quantity: unknown) {
   const hasCut = !blank(cut);
   const hasQty = positive(quantity);
   if (hasCut && !hasQty) missing.push(`${label}: informe a quantidade em kg`);
@@ -71,18 +76,25 @@ export function getCardapioReadiness(cardapio: CardapioLike) {
       missing.push(`${prefix}: almoço geral incompleto`);
     }
     if (blank(day.almoco?.pacienteProteina)) missing.push(`${prefix}: proteína do almoço do paciente`);
-    if (blank(day.jantarPaciente?.prato) && blank(day.jantarPaciente?.proteina)) missing.push(`${prefix}: jantar do paciente`);
+    if (blank(day.jantarPaciente?.proteina)) missing.push(`${prefix}: proteína do jantar do paciente`);
+    if (blank(day.jantarPaciente?.prato)) missing.push(`${prefix}: composição do jantar do paciente`);
     if (blank(day.ceia)) missing.push(`${prefix}: ceia`);
 
-    checkMeatPair(missing, `${prefix} / almoço geral`, general?.tipoCarne, general?.quantidadeKg);
-    checkMeatPair(missing, `${prefix} / almoço paciente`, day.almoco?.pacienteTipoCarne, day.almoco?.pacienteQuantidadeKg);
-    checkMeatPair(missing, `${prefix} / jantar paciente`, day.jantarPaciente?.tipoCarne, day.jantarPaciente?.quantidadeKg);
+    if (general && !blank(general.proteina)) {
+      checkRequiredMeat(missing, `${prefix} / almoço geral`, general.tipoCarne, general.quantidadeKg);
+    }
+    if (!blank(day.almoco?.pacienteProteina)) {
+      checkRequiredMeat(missing, `${prefix} / almoço paciente`, day.almoco?.pacienteTipoCarne, day.almoco?.pacienteQuantidadeKg);
+    }
+    if (!blank(day.jantarPaciente?.proteina)) {
+      checkRequiredMeat(missing, `${prefix} / jantar paciente`, day.jantarPaciente?.tipoCarne, day.jantarPaciente?.quantidadeKg);
+    }
     general?.carnesAdicionais?.forEach((item, index) => {
-      checkMeatPair(missing, `${prefix} / carne adicional ${index + 1}`, item.tipoCarne, item.quantidadeKg);
+      checkOptionalMeatPair(missing, `${prefix} / carne adicional ${index + 1}`, item.tipoCarne, item.quantidadeKg);
     });
   });
 
-  const checks = 6 + cardapio.dias.length * 9;
+  const checks = 6 + cardapio.dias.length * 13;
   const passed = Math.max(0, checks - missing.length);
   return {
     ok: missing.length === 0,
