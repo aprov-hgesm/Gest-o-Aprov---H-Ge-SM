@@ -1,4 +1,4 @@
-export type OperationalTab = 'inicio' | 'dashboard' | 'efetivo' | 'afastamentos' | 'cardapio' | 'profissional';
+export type OperationalTab = 'inicio' | 'dashboard' | 'efetivo' | 'afastamentos' | 'cardapio' | 'saque' | 'profissional';
 export type ProfessionalSection = 'historico' | 'permutas' | 'cardapios' | 'configuracoes';
 
 export interface OperationalNavigationAction {
@@ -22,7 +22,8 @@ const contexts: Record<OperationalTab, OperationalNavigationContext> = {
       { id: 'escalas', label: 'Escalas', tab: 'dashboard' },
       { id: 'efetivo', label: 'Efetivo', tab: 'efetivo' },
       { id: 'afastamentos', label: 'Afastamentos', tab: 'afastamentos' },
-      { id: 'cardapio', label: 'Cardápio e Saque', tab: 'cardapio' },
+      { id: 'cardapio', label: 'Cardápio', tab: 'cardapio' },
+      { id: 'saque', label: 'Saque de Carnes', tab: 'saque' },
     ],
   },
   dashboard: {
@@ -57,11 +58,21 @@ const contexts: Record<OperationalTab, OperationalNavigationContext> = {
   },
   cardapio: {
     label: 'Cardápio Semanal',
-    description: 'Edição semanal, prontidão, fluxo de aprovação e Saque de Carnes.',
+    description: 'Edição semanal, prontidão e fluxo documental do cardápio.',
     actions: [
       { id: 'central', label: 'Central Operacional', tab: 'inicio' },
+      { id: 'saque', label: 'Saque de Carnes', tab: 'saque' },
       { id: 'versoes', label: 'Versões e Arquivo', professionalSection: 'cardapios' },
       { id: 'historico', label: 'Histórico', professionalSection: 'historico' },
+    ],
+  },
+  saque: {
+    label: 'Saque de Carnes',
+    description: 'Retirada, separação, descongelamento e rastreabilidade operacional das carnes.',
+    actions: [
+      { id: 'central', label: 'Central Operacional', tab: 'inicio' },
+      { id: 'cardapio', label: 'Cardápio Semanal', tab: 'cardapio' },
+      { id: 'historico', label: 'Histórico Operacional', professionalSection: 'historico' },
       { id: 'config', label: 'Configurações', professionalSection: 'configuracoes' },
     ],
   },
@@ -72,6 +83,7 @@ const contexts: Record<OperationalTab, OperationalNavigationContext> = {
       { id: 'central', label: 'Central Operacional', tab: 'inicio' },
       { id: 'escalas', label: 'Escalas', tab: 'dashboard' },
       { id: 'cardapio', label: 'Cardápio', tab: 'cardapio' },
+      { id: 'saque', label: 'Saque de Carnes', tab: 'saque' },
       { id: 'efetivo', label: 'Efetivo', tab: 'efetivo' },
     ],
   },
