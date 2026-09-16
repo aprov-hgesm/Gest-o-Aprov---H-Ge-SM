@@ -518,8 +518,6 @@ export default function RosterApp() {
   const [newMilSpecialty, setNewMilSpecialty] = useState('Cozinheiro de Dia');
   const [newMilSpecialtySecondary, setNewMilSpecialtySecondary] = useState('Nenhuma');
   const [newMilScaleType, setNewMilScaleType] = useState<'EP' | 'EV' | 'Ambas'>('Ambas');
-  const [newMilStatus, setNewMilStatus] = useState<'Ativo' | 'Afastado'>('Ativo');
-  const [newMilDutyCount, setNewMilDutyCount] = useState(0);
 
   // Notification Toast state
   const [toast, setToast] = useState<{ show: boolean; msg: string; type: 'success' | 'info' }>({ show: false, msg: '', type: 'success' });
@@ -670,9 +668,9 @@ export default function RosterApp() {
       matricula: newMilMatricula,
       specialty: newMilSpecialty,
       specialtySecondary: newMilSpecialtySecondary === 'Nenhuma' ? undefined : newMilSpecialtySecondary,
-      status: newMilStatus,
+      status: 'Ativo',
       type: newMilScaleType,
-      dutyCount: newMilDutyCount
+      dutyCount: 0
     };
 
     const updated = [...militaryList, newMil];
@@ -1703,7 +1701,7 @@ export default function RosterApp() {
                                 "text-[10px] font-bold px-1.5 py-0.2 rounded uppercase shrink-0",
                                 mil.status === 'Ativo' ? "bg-slate-100 text-slate-600" : "bg-rose-50 text-rose-600"
                               )}>
-                                {mil.status === 'Ativo' ? 'Disponível' : 'LTS'}
+                                {mil.status === 'Ativo' ? 'Disponível' : 'Afastado'}
                               </span>
                             </div>
                           </div>
@@ -1726,7 +1724,7 @@ export default function RosterApp() {
                 <div className="bg-white border border-slate-200 p-5 rounded-xl shadow-xs flex items-center justify-between">
                   <div>
                     <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">Militares Afastados Hoje</span>
-                    <h3 className="text-3xl font-black text-slate-800">{absences.filter(a => a.status === 'ATIVO').length}</h3>
+                    <h3 className="text-3xl font-black text-slate-800">{new Set(absences.filter(a => resolveAbsenceStatus(a) === 'ATIVO').map(a => a.militaryId)).size}</h3>
                     <p className="text-xs text-rose-500 font-medium mt-1 flex items-center gap-1">
                       <ShieldAlert className="w-3.5 h-3.5" />
                       <span>Requer atenção na escala</span>
@@ -1741,11 +1739,17 @@ export default function RosterApp() {
                   <div>
                     <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">Retornos Previstos (7 dias)</span>
                     <h3 className="text-3xl font-black text-slate-800">
-                      {String(absences.filter(a => {
-                        if (a.indefinite || !a.endDate || a.endDate === 'Indefinido') return false;
-                        const endDay = getDayNumberFromISO(a.endDate);
-                        return endDay >= 1 && endDay <= 7;
-                      }).length).padStart(2, '0')}
+                      {(() => {
+                        const today = localIsoDate();
+                        const horizonDate = new Date();
+                        horizonDate.setDate(horizonDate.getDate() + 7);
+                        const horizon = localIsoDate(horizonDate);
+                        const returning = new Set(absences.filter(a => {
+                          if (resolveAbsenceStatus(a) !== 'ATIVO' || a.indefinite || !a.endDate || a.endDate === 'Indefinido') return false;
+                          return a.endDate >= today && a.endDate <= horizon;
+                        }).map(a => a.militaryId));
+                        return String(returning.size).padStart(2, '0');
+                      })()}
                     </h3>
                     <p className="text-xs text-slate-400 font-medium mt-1 flex items-center gap-1">
                       <UserCheck className="w-3.5 h-3.5 text-emerald-500" />
@@ -2115,7 +2119,7 @@ export default function RosterApp() {
                       >
                         <option value="Todos">Status: Todos</option>
                         <option value="Ativo">Ativo</option>
-                        <option value="Afastado">Afastado / LTS</option>
+                        <option value="Afastado">Afastado</option>
                       </select>
 
                       <select
@@ -2187,7 +2191,7 @@ export default function RosterApp() {
                                 "px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase",
                                 mil.status === 'Ativo' ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
                               )}>
-                                {mil.status === 'Ativo' ? 'Ativo' : 'LTS / Disp'}
+                                {mil.status === 'Ativo' ? 'Ativo' : 'Afastado'}
                               </span>
                             </td>
                             <td className="p-4 text-center">
@@ -2321,27 +2325,11 @@ export default function RosterApp() {
                     </div>
 
                     <div className="space-y-1">
-                      <label className="text-xs font-semibold text-slate-700 block">Contagem de Serviços Inicial</label>
-                      <input 
-                        type="number"
-                        min="0"
-                        value={newMilDutyCount}
-                        onChange={e => setNewMilDutyCount(Number(e.target.value))}
-                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-medium focus:ring-2 focus:ring-slate-900 outline-hidden bg-white"
-                      />
+                      <label className="text-xs font-semibold text-slate-700 block">Situação operacional</label>
+                      <div className="min-h-[34px] px-3 py-2 border border-slate-200 rounded-lg text-[11px] leading-4 bg-slate-50 text-slate-600">
+                        Status é definido pela aba <strong>Afastamentos</strong>; a contagem de serviços é calculada automaticamente pela escala.
+                      </div>
                     </div>
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-xs font-semibold text-slate-700 block">Status de Saúde / Operabilidade</label>
-                    <select
-                      value={newMilStatus}
-                      onChange={e => setNewMilStatus(e.target.value as 'Ativo' | 'Afastado')}
-                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-medium focus:ring-2 focus:ring-slate-900 outline-hidden bg-white"
-                    >
-                      <option value="Ativo">Ativo / Pronto para Serviço</option>
-                      <option value="Afastado">Afastado (LTS / Licença)</option>
-                    </select>
                   </div>
 
                   <button
@@ -2628,26 +2616,20 @@ export default function RosterApp() {
 
                 <div className="space-y-1">
                   <label className="text-xs font-semibold text-slate-700 block">Serviços Cumpridos</label>
-                  <input 
-                    type="number"
-                    min="0"
-                    value={editingMil.dutyCount}
-                    onChange={e => setEditingMil({ ...editingMil, dutyCount: Number(e.target.value) })}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-medium focus:ring-2 focus:ring-slate-900 outline-hidden bg-white"
-                  />
+                  <div className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-bold bg-slate-50 text-slate-700">
+                    {editingMil.dutyCount} serviço(s) — cálculo automático
+                  </div>
                 </div>
               </div>
 
               <div className="space-y-1">
                 <label className="text-xs font-semibold text-slate-700 block">Situação de Prontidão</label>
-                <select
-                  value={editingMil.status}
-                  onChange={e => setEditingMil({ ...editingMil, status: e.target.value as 'Ativo' | 'Afastado' })}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-medium focus:ring-2 focus:ring-slate-900 outline-hidden bg-white"
-                >
-                  <option value="Ativo">Ativo / Pronto</option>
-                  <option value="Afastado">Afastado (LTS / Licença)</option>
-                </select>
+                <div className={cn(
+                  'w-full px-3 py-2 border rounded-lg text-xs font-semibold',
+                  editingMil.status === 'Ativo' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-rose-200 bg-rose-50 text-rose-800'
+                )}>
+                  {editingMil.status} — gerenciado exclusivamente pela aba Afastamentos
+                </div>
               </div>
 
               <div className="pt-4 border-t border-slate-200 flex justify-end gap-2">
