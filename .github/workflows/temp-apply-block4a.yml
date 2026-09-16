@@ -39,17 +39,11 @@ jobs:
           p = Path('.github/workflows/validate.yml')
           t = p.read_text()
           if 'Block 4A functional audit tests' not in t:
-              anchor = '''      - name: Professional flows tests
-                run: |
-                  node --test tests/professional-flows.test.ts
-                  node tests/professional-flows-smoke.mjs
-          '''
-              replacement = anchor + '''      - name: Block 4A functional audit tests
-                run: node --test tests/block4a-functional-audit.test.ts
-          '''
-              if anchor not in t:
-                  raise SystemExit('Bloco Professional flows tests não encontrado no validate.yml')
-              t = t.replace(anchor, replacement, 1)
+              marker = '          node tests/professional-flows-smoke.mjs\n'
+              addition = marker + '      - name: Block 4A functional audit tests\n        run: node --test tests/block4a-functional-audit.test.ts\n'
+              if marker not in t:
+                  raise SystemExit('Linha do smoke test profissional não encontrada no validate.yml')
+              t = t.replace(marker, addition, 1)
               p.write_text(t)
           PY
       - name: Commit das correções
