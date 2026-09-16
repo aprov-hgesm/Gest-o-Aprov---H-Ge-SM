@@ -19,6 +19,8 @@ import { cn } from '@/lib/utils';
 import { getCardapioReadiness } from '@/lib/domain/cardapio-readiness';
 import { localIsoDate, resolveAbsenceStatus, type AbsenceStatus } from '@/lib/domain/roster-integrity';
 import { gerarListaSaqueCarnes, type WeeklyCardapioDoc } from '@/components/CardapioSemanal';
+import OperationalCalendar from '@/components/OperationalCalendar';
+import type { OperationalCalendarDay } from '@/lib/domain/operational-calendar';
 
 export type OperationalTab = 'inicio' | 'dashboard' | 'efetivo' | 'afastamentos' | 'cardapio';
 
@@ -108,7 +110,7 @@ function pickOperationalCardapio(cardapios: WeeklyCardapioDoc[], today: string) 
   if (active) return { cardapio: active, upcoming: false };
   const next = sorted.find(item => item.dataInicio > today);
   if (next) return { cardapio: next, upcoming: true };
-  return { cardapio: sorted.at(-1), upcoming: false };
+  return { cardapio: undefined, upcoming: false };
 }
 
 export function buildOperationalSnapshot(params: {
@@ -187,10 +189,11 @@ export function buildOperationalSnapshot(params: {
   const selected = pickOperationalCardapio(params.cardapios, today);
   const cardapio = selected.cardapio;
   const readiness = cardapio ? getCardapioReadiness(cardapio) : null;
-  const meatItems = cardapio ? gerarListaSaqueCarnes(cardapio.dias) : [];
+  const meatItems = params.cardapios.flatMap(item => gerarListaSaqueCarnes(item.dias));
   const meatToday = meatItems.filter(item => item.dataSaqueIso === today && item.quantidadeKg > 0);
   const meatKgToday = meatToday.reduce((sum, item) => sum + item.quantidadeKg, 0);
-  const zeroQuantityItems = meatItems.filter(item => item.tipoCarne && item.quantidadeKg <= 0);
+  const meatHorizon = addDays(today, 13);
+  const zeroQuantityItems = meatItems.filter(item => item.tipoCarne && item.quantidadeKg <= 0 && item.diaCardapioIso >= today && item.diaCardapioIso <= meatHorizon);
 
   if (!cardapio) {
     alerts.push({
@@ -335,9 +338,11 @@ export function OperationalAlertsPanel({
 
 export default function OperationalDashboard({
   snapshot,
+  calendarDays,
   onNavigate
 }: {
   snapshot: OperationalSnapshot;
+  calendarDays: OperationalCalendarDay[];
   onNavigate: (tab: OperationalTab) => void;
 }) {
   const statusLabel = snapshot.cardapio?.workflow.status.replaceAll('_', ' ') || 'SEM CARDÁPIO';
@@ -484,6 +489,8 @@ function MetricCard({
       </div>
       <div className="text-2xl font-bold text-slate-900 mt-3">{value}</div>
       <div className="text-[11px] text-slate-500 mt-1">{detail}</div>
+      <OperationalCalendar days={calendarDays} onNavigate={onNavigate} />
+
     </div>
   );
 }

@@ -28,8 +28,9 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '@/lib/utils';
-import CardapioSemanal, { initialWeeklyCardapio, type WeeklyCardapioDoc } from '@/components/CardapioSemanal';
+import CardapioSemanal, { gerarListaSaqueCarnes, initialWeeklyCardapio, type WeeklyCardapioDoc } from '@/components/CardapioSemanal';
 import OperationalDashboard, { OperationalAlertsPanel, buildOperationalSnapshot, type OperationalTab } from '@/components/OperationalDashboard';
+import { buildOperationalCalendar, mergeOperationalAlerts } from '@/lib/domain/operational-calendar';
 import SyncStatus from '@/components/SyncStatus';
 import { useCloudData } from '@/hooks/use-cloud-data';
 import { clean, equal } from '@/lib/persistence/core';
@@ -970,7 +971,15 @@ export default function RosterApp() {
 
   const { rate: complianceRate } = rosterCompliance(roster);
 
-  const operationalSnapshot = buildOperationalSnapshot({
+  const operationalMeatItems = cardapioCloud.state.records.flatMap(item => gerarListaSaqueCarnes(item.dias));
+  const operationalCalendar = buildOperationalCalendar({
+    roster,
+    absences,
+    cardapios: cardapioCloud.state.records,
+    meatItems: operationalMeatItems,
+    horizonDays: 14,
+  });
+  const operationalSnapshotBase = buildOperationalSnapshot({
     militaryList,
     absences,
     roster,
@@ -978,6 +987,13 @@ export default function RosterApp() {
     rosterPending: rosterCloud.state.pending,
     cardapioPending: cardapioCloud.state.pending
   });
+  const operationalSnapshot = {
+    ...operationalSnapshotBase,
+    alerts: mergeOperationalAlerts([
+      ...operationalSnapshotBase.alerts,
+      ...operationalCalendar.alerts,
+    ]),
+  };
 
   // Filter roster for display on Dashboard (Weekends & Custom Holidays)
   const daysToShow = Object.keys(roster)
@@ -1200,7 +1216,7 @@ export default function RosterApp() {
 
           {/* CENTRAL OPERACIONAL */}
           {activeTab === 'inicio' && (
-            <OperationalDashboard snapshot={operationalSnapshot} onNavigate={switchTab} />
+            <OperationalDashboard snapshot={operationalSnapshot} calendarDays={operationalCalendar.days} onNavigate={switchTab} />
           )}
 
           {/* TAB 1: DASHBOARD / GESTÃO DE ESCALAS */}
