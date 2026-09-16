@@ -18,11 +18,30 @@ const absence = (value: unknown) => object(value) &&
 const cell = (value: unknown) => value === null || (object(value) &&
   strings(value, ['militaryId', 'militaryName', 'rank']) &&
   ['EP', 'EV', 'PERM', 'DISP'].includes(String(value.type)));
+const auditEvent = (value: unknown) => object(value) &&
+  strings(value, ['id', 'createdAt', 'module', 'action', 'entityType', 'summary']) &&
+  optional(value, 'entityId', 'string') && optional(value, 'previousValue', 'string') &&
+  optional(value, 'newValue', 'string') && optional(value, 'note', 'string');
+const swap = (value: unknown) => object(value) &&
+  strings(value, ['id', 'day', 'post', 'originalMilitaryId', 'originalMilitaryName', 'originalRank', 'originalType',
+    'replacementMilitaryId', 'replacementMilitaryName', 'replacementRank', 'status', 'createdAt']) &&
+  ['EP', 'EV', 'PERM', 'DISP'].includes(String(value.originalType)) &&
+  ['CONFIRMADA', 'CANCELADA'].includes(String(value.status)) &&
+  optional(value, 'cancelledAt', 'string') && optional(value, 'note', 'string');
+const adminSettings = (value: unknown) => object(value) &&
+  list(value.rosterPosts, item => typeof item === 'string') &&
+  list(value.absenceTypes, item => typeof item === 'string') &&
+  list(value.specialties, item => typeof item === 'string') &&
+  list(value.ranks, item => typeof item === 'string') &&
+  typeof value.historyRetentionLimit === 'number' && Number.isSafeInteger(value.historyRetentionLimit);
 export function validateRoster(value: unknown): boolean {
   if (!object(value) || value.id !== 'principal' ||
       !list(value.militaryList, military) || !list(value.absences, absence) ||
       !list(value.changelogs, item => object(item) && strings(item, ['time', 'text'])) ||
       !list(value.customHolidays, item => object(item) && strings(item, ['id', 'date', 'name'])) ||
+      (value.auditTrail !== undefined && !list(value.auditTrail, auditEvent)) ||
+      (value.swaps !== undefined && !list(value.swaps, swap)) ||
+      (value.adminSettings !== undefined && !adminSettings(value.adminSettings)) ||
       !object(value.roster)) return false;
   return Object.values(value.roster).every(day => object(day) && Object.values(day).every(cell));
 }
@@ -41,12 +60,18 @@ function day(value: unknown): boolean {
       object(item) && typeof item.tipoCarne === 'string' && quantity(item.quantidadeKg))) &&
     optional(value, 'evento', 'string') && optional(value, 'feriado', 'boolean');
 }
+const cardapioVersion = (value: unknown) => object(value) &&
+  strings(value, ['id', 'createdAt', 'reason', 'workflowStatus', 'snapshot']) &&
+  typeof value.version === 'number' && Number.isSafeInteger(value.version) && value.version >= 1;
 export function validateCardapio(value: unknown): boolean {
   if (!object(value) || !strings(value, ['id', 'dataInicio', 'dataFim', 'dataEmissao', 'cidade', 'uf',
     'regiaoMilitar', 'organizacaoMilitar', 'divisao', 'lancheTexto', 'ceiaPacienteTexto',
     'observacaoGeral', 'basicoCopaInternados']) || !object(value.workflow) ||
     !object(value.responsavelTecnico) ||
     !strings(value.responsavelTecnico, ['nome', 'postoGraduacao', 'funcao']) ||
+    (value.version !== undefined && (typeof value.version !== 'number' || !Number.isSafeInteger(value.version) || value.version < 1)) ||
+    (value.versions !== undefined && !list(value.versions, cardapioVersion)) ||
+    !optional(value, 'archivedAt', 'string') || !optional(value, 'archiveReason', 'string') || !optional(value, 'lastChangeReason', 'string') ||
     !Array.isArray(value.dias) || value.dias.length !== 7 || !value.dias.every(day)) return false;
   const workflow = value.workflow;
   return ['EM_ELABORACAO', 'CONFERIDO', 'APROVADO', 'FINALIZADO'].includes(String(workflow.status)) &&

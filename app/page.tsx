@@ -30,6 +30,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '@/lib/utils';
 import CardapioSemanal, { gerarListaSaqueCarnes, initialWeeklyCardapio, type WeeklyCardapioDoc } from '@/components/CardapioSemanal';
 import OperationalDashboard, { OperationalAlertsPanel, buildOperationalSnapshot, type OperationalTab } from '@/components/OperationalDashboard';
+import ProfessionalFlows from '@/components/ProfessionalFlows';
 import { buildOperationalCalendar, mergeOperationalAlerts } from '@/lib/domain/operational-calendar';
 import SyncStatus from '@/components/SyncStatus';
 import { useCloudData } from '@/hooks/use-cloud-data';
@@ -40,6 +41,10 @@ import {
   isMilitaryAbsentOnDate, localIsoDate, normalizeMilitaryStatuses,
   recalculateDutyCounts, resolveAbsenceStatus, rosterCompliance
 } from '@/lib/domain/roster-integrity';
+import {
+  createAuditEvent, defaultAdminSettings, inferAuditFromLog, normalizeAdminSettings, trimAuditTrail,
+  type AdminSettings, type AuditEvent, type SwapRecord
+} from '@/lib/domain/professional-flows';
 
 // ==========================================
 // TYPES & SCHEMAS
@@ -420,10 +425,14 @@ interface RosterDocument {
   roster: WeekRoster;
   changelogs: LogEntry[];
   customHolidays: HolidayDate[];
+  auditTrail?: AuditEvent[];
+  swaps?: SwapRecord[];
+  adminSettings?: AdminSettings;
 }
 const initialRosterDocuments: RosterDocument[] = [{
   id: 'principal', militaryList: initialMilitary, absences: initialAbsences,
-  roster: initialRoster, changelogs: initialLogs, customHolidays: initialHolidays
+  roster: initialRoster, changelogs: initialLogs, customHolidays: initialHolidays,
+  auditTrail: [], swaps: [], adminSettings: defaultAdminSettings
 }];
 function readLegacyRoster(): RosterDocument[] | null {
   const keys = ['dr_military', 'dr_absences', 'dr_roster', 'dr_logs', 'dr_holidays'] as const;
@@ -435,7 +444,8 @@ function readLegacyRoster(): RosterDocument[] | null {
     absences: raw[1] === null ? initialAbsences : JSON.parse(raw[1]),
     roster: raw[2] === null ? initialRoster : JSON.parse(raw[2]),
     changelogs: raw[3] === null ? initialLogs : JSON.parse(raw[3]),
-    customHolidays: raw[4] === null ? initialHolidays : JSON.parse(raw[4])
+    customHolidays: raw[4] === null ? initialHolidays : JSON.parse(raw[4]),
+    auditTrail: [], swaps: [], adminSettings: defaultAdminSettings
   }];
 }
 
@@ -458,6 +468,9 @@ export default function RosterApp() {
   // ==========================================
   const rosterDocument = rosterCloud.state.records[0] ?? initialRosterDocuments[0];
   const { absences, roster, changelogs, customHolidays } = rosterDocument;
+  const auditTrail = rosterDocument.auditTrail || [];
+  const swaps = rosterDocument.swaps || [];
+  const adminSettings = normalizeAdminSettings(rosterDocument.adminSettings);
   const militaryList = normalizeMilitaryStatuses(rosterDocument.militaryList, absences);
   const [activeTab, setActiveTab] = useState<OperationalTab>('inicio');
   
@@ -534,13 +547,14 @@ export default function RosterApp() {
   const [toast, setToast] = useState<{ show: boolean; msg: string; type: 'success' | 'info' }>({ show: false, msg: '', type: 'success' });
   const [alertsOpen, setAlertsOpen] = useState(false);
 
-  // One versioned document keeps personnel, absences and assignments consistent.
+  // One versioned document keeps personnel, absences, assignments and professional history consistent.
   const saveState = (
     newMil: Military[],
     newAbs: Absence[],
     newRos: WeekRoster,
     newLogs: LogEntry[],
-    newHolidays: HolidayDate[] = customHolidays
+    newHolidays: HolidayDate[] = customHolidays,
+    options?: { auditEvent?: AuditEvent; swaps?: SwapRecord[]; adminSettings?: AdminSettings }
   ) => {
     const normalizedAbsences = newAbs.map(absence => ({
       ...absence,
@@ -550,9 +564,20 @@ export default function RosterApp() {
       normalizeMilitaryStatuses(newMil, normalizedAbsences),
       newRos
     );
+    const nextSettings = normalizeAdminSettings(options?.adminSettings || adminSettings);
+    const newestLog = newLogs[0];
+    const previousNewestLog = changelogs[0];
+    const hasNewLog = !!newestLog && (!previousNewestLog || newestLog.time !== previousNewestLog.time || newestLog.text !== previousNewestLog.text);
+    const derivedAudit = options?.auditEvent || (hasNewLog ? inferAuditFromLog(newestLog.text) : undefined);
+    const nextAuditTrail = derivedAudit
+      ? trimAuditTrail([derivedAudit, ...auditTrail.filter(item => item.id !== derivedAudit.id)], nextSettings)
+      : trimAuditTrail(auditTrail, nextSettings);
     return rosterCloud.controller.update([{
       id: 'principal', militaryList: normalizedMilitary, absences: normalizedAbsences,
-      roster: newRos, changelogs: newLogs, customHolidays: newHolidays
+      roster: newRos, changelogs: newLogs, customHolidays: newHolidays,
+      auditTrail: nextAuditTrail,
+      swaps: options?.swaps || swaps,
+      adminSettings: nextSettings
     }]);
   };
 
@@ -573,6 +598,133 @@ export default function RosterApp() {
     return updated;
   };
 
+  const recordCardapioAudit = (event: Omit<AuditEvent, 'id' | 'createdAt'>) => {
+    const auditEvent = createAuditEvent(event);
+    saveState(militaryList, absences, roster, changelogs, customHolidays, { auditEvent });
+  };
+
+  const handleCancelSwap = (id: string, note = '') => {
+    const swap = swaps.find(item => item.id === id);
+    if (!swap || swap.status !== 'CONFIRMADA') return;
+    const updatedRoster = clean(roster);
+    const cell = updatedRoster[swap.day]?.[swap.post];
+    let restored = false;
+    if (cell?.militaryId === swap.replacementMilitaryId && cell.type === 'PERM') {
+      updatedRoster[swap.day][swap.post] = {
+        militaryId: swap.originalMilitaryId,
+        militaryName: swap.originalMilitaryName,
+        rank: swap.originalRank,
+        type: swap.originalType
+      };
+      restored = true;
+    }
+    const nextSwaps = swaps.map(item => item.id === id ? {
+      ...item, status: 'CANCELADA' as const, cancelledAt: new Date().toISOString(), note
+    } : item);
+    const logsList = addLog(`Permuta cancelada em ${swap.day} / ${swap.post}${restored ? '; militar original restaurado' : '; posto já havia sido alterado e foi preservado'}.`);
+    const auditEvent = createAuditEvent({
+      module: 'Permutas', action: 'CANCELAMENTO', entityType: 'Permuta', entityId: swap.id,
+      summary: `Permuta cancelada: ${swap.originalRank} ${swap.originalMilitaryName} ↔ ${swap.replacementRank} ${swap.replacementMilitaryName}.`,
+      previousValue: `${swap.replacementRank} ${swap.replacementMilitaryName} em ${swap.post}`,
+      newValue: restored ? `${swap.originalRank} ${swap.originalMilitaryName} restaurado em ${swap.post}` : 'Posto preservado por alteração posterior',
+      note
+    });
+    if (!saveState(militaryList, absences, updatedRoster, logsList, customHolidays, { swaps: nextSwaps, auditEvent })) return;
+    showToast('Permuta cancelada e histórico preservado.');
+  };
+
+  const handleSaveAdminSettings = (settings: AdminSettings) => {
+    const normalized = normalizeAdminSettings(settings);
+    const updatedRoster = clean(roster);
+    Object.keys(updatedRoster).forEach(day => {
+      normalized.rosterPosts.forEach(post => {
+        if (!(post in updatedRoster[day])) updatedRoster[day][post] = null;
+      });
+    });
+    const logsList = addLog('Configurações administrativas atualizadas. Postos históricos existentes foram preservados.');
+    const auditEvent = createAuditEvent({
+      module: 'Configurações', action: 'ALTERACAO', entityType: 'Configurações administrativas', entityId: 'principal',
+      summary: 'Parâmetros administrativos atualizados.',
+      previousValue: `${adminSettings.rosterPosts.length} postos; ${adminSettings.absenceTypes.length} tipos de afastamento; ${adminSettings.specialties.length} especialidades`,
+      newValue: `${normalized.rosterPosts.length} postos; ${normalized.absenceTypes.length} tipos de afastamento; ${normalized.specialties.length} especialidades`
+    });
+    if (!saveState(militaryList, absences, updatedRoster, logsList, customHolidays, { adminSettings: normalized, auditEvent })) return;
+    showToast('Configurações administrativas salvas.');
+  };
+
+  const handleArchiveCardapio = (id: string, reason: string) => {
+    const current = cardapioCloud.state.records.find(item => item.id === id);
+    if (!current || current.archivedAt) return;
+    const updated = cardapioCloud.state.records.map(item => item.id === id ? {
+      ...item, archivedAt: new Date().toISOString(), archiveReason: reason
+    } : item);
+    if (!cardapioCloud.controller.update(updated)) return;
+    recordCardapioAudit({
+      module: 'Arquivamento', action: 'ARQUIVAMENTO', entityType: 'Cardápio', entityId: id,
+      summary: `Cardápio ${current.dataInicio} a ${current.dataFim} arquivado.`, note: reason
+    });
+    showToast('Cardápio arquivado sem exclusão de dados.');
+  };
+
+  const handleRestoreCardapio = (id: string) => {
+    const current = cardapioCloud.state.records.find(item => item.id === id);
+    if (!current?.archivedAt) return;
+    const updated = cardapioCloud.state.records.map(item => item.id === id ? {
+      ...item, archivedAt: undefined, archiveReason: undefined
+    } : item);
+    if (!cardapioCloud.controller.update(updated)) return;
+    recordCardapioAudit({
+      module: 'Arquivamento', action: 'RESTAURACAO', entityType: 'Cardápio', entityId: id,
+      summary: `Cardápio ${current.dataInicio} a ${current.dataFim} restaurado do arquivo.`
+    });
+    showToast('Cardápio restaurado do arquivo.');
+  };
+
+  const handleRestoreCardapioVersion = (cardapioId: string, versionId: string, reason: string) => {
+    const current = cardapioCloud.state.records.find(item => item.id === cardapioId);
+    const version = current?.versions?.find(item => item.id === versionId);
+    if (!current || !version) return;
+    try {
+      const restored = JSON.parse(version.snapshot) as WeeklyCardapioDoc;
+      const currentVersion = current.version || 1;
+      const beforeSnapshot = {
+        id: `version-${current.id}-${currentVersion}-${Date.now()}`,
+        version: currentVersion,
+        createdAt: new Date().toISOString(),
+        reason: 'Estado preservado antes da restauração',
+        workflowStatus: current.workflow.status,
+        snapshot: JSON.stringify({ ...current, versions: undefined })
+      };
+      const versions = [beforeSnapshot, ...(current.versions || [])]
+        .filter((item, index, list) => list.findIndex(other => other.id === item.id) === index);
+      const next: WeeklyCardapioDoc = {
+        ...restored,
+        id: current.id,
+        version: currentVersion + 1,
+        versions,
+        archivedAt: undefined,
+        archiveReason: undefined,
+        lastChangeReason: reason,
+        workflow: {
+          ...restored.workflow,
+          status: 'EM_ELABORACAO',
+          conferido: { ...restored.workflow.conferido, status: 'PENDENTE', data: undefined },
+          aprovado: { ...restored.workflow.aprovado, status: 'PENDENTE', data: undefined }
+        }
+      };
+      const updated = cardapioCloud.state.records.map(item => item.id === cardapioId ? next : item);
+      if (!cardapioCloud.controller.update(updated)) return;
+      recordCardapioAudit({
+        module: 'Cardápio', action: 'RESTAURACAO', entityType: 'Versão de cardápio', entityId: cardapioId,
+        summary: `Versão ${version.version} restaurada como nova versão ${currentVersion + 1} de trabalho.`,
+        previousValue: `Versão ${currentVersion}`, newValue: `Versão ${currentVersion + 1} baseada na v${version.version}`, note: reason
+      });
+      showToast(`Versão ${version.version} restaurada como nova versão de trabalho.`);
+    } catch {
+      showToast('A versão selecionada está corrompida e não pôde ser restaurada.', 'info');
+    }
+  };
+
   // ==========================================
   // LOGIC & ALGORITHMS
   // ==========================================
@@ -585,7 +737,7 @@ export default function RosterApp() {
   // OPERAÇÃO MANUAL DA ESCALA
   // ==========================================
 
-  // Assign specific military manually
+  // Assign specific military manually. A permuta exige ocupante original e gera registro estruturado.
   const handleAssignMilitary = (milId: string | 'empty') => {
     if (!selectedCell) return;
     const { day, post } = selectedCell;
@@ -600,52 +752,77 @@ export default function RosterApp() {
     }
 
     const prevCell = updatedRoster[day] ? updatedRoster[day][post] : null;
+    if (selectedAssignType === 'PERM' && milId !== 'empty' && (!prevCell?.militaryId || prevCell.militaryId === milId)) {
+      showToast('Para registrar uma permuta, o posto precisa estar ocupado por outro militar. Abra o posto já preenchido e selecione o substituto.', 'info');
+      return;
+    }
 
-    // Decrement previous duty count if existed
+    let nextSwaps = swaps;
+    let auditEvent: AuditEvent | undefined;
+
     if (prevCell && prevCell.militaryId) {
       const idx = updatedMilList.findIndex(m => m.id === prevCell.militaryId);
-      if (idx !== -1) {
-        updatedMilList[idx].dutyCount = Math.max(0, updatedMilList[idx].dutyCount - 1);
-      }
+      if (idx !== -1) updatedMilList[idx].dutyCount = Math.max(0, updatedMilList[idx].dutyCount - 1);
     }
 
     if (milId === 'empty') {
-      if (updatedRoster[day]) {
-        updatedRoster[day][post] = null;
-      }
+      if (updatedRoster[day]) updatedRoster[day][post] = null;
       logsList = addLog(`Posto ${post} em ${day} foi desmarcado manualmente (posto vago).`, logsList);
+      auditEvent = createAuditEvent({
+        module: 'Escalas', action: 'ALTERACAO', entityType: 'Posto de escala', entityId: `${day}:${post}`,
+        summary: `Posto ${post} em ${day} desmarcado manualmente.`,
+        previousValue: prevCell ? `${prevCell.rank} ${prevCell.militaryName}` : 'Vago', newValue: 'Vago'
+      });
     } else {
       const mil = updatedMilList.find(m => m.id === milId);
       if (mil) {
-        const finalType = selectedAssignType === 'PERM' || selectedAssignType === 'DISP'
-          ? selectedAssignType
-          : 'EV';
-
+        const finalType = selectedAssignType === 'PERM' || selectedAssignType === 'DISP' ? selectedAssignType : 'EV';
         if (!updatedRoster[day]) updatedRoster[day] = {};
-        updatedRoster[day][post] = {
-          militaryId: mil.id,
-          militaryName: mil.name.toUpperCase(),
-          rank: mil.rank,
-          type: finalType
-        };
-
-        // Increment duty count if not a Dispensa (DISP)
+        updatedRoster[day][post] = { militaryId: mil.id, militaryName: mil.name.toUpperCase(), rank: mil.rank, type: finalType };
         if (finalType !== 'DISP') {
           const idx = updatedMilList.findIndex(m => m.id === milId);
-          if (idx !== -1) {
-            updatedMilList[idx].dutyCount += 1;
-          }
+          if (idx !== -1) updatedMilList[idx].dutyCount += 1;
         }
 
-        const typeLabel = finalType === 'EV' ? 'Escala Vermelha' : finalType === 'PERM' ? 'Permuta' : 'Dispensa (LTS)';
-        logsList = addLog(`${mil.rank}. ${mil.name} escalado manualmente (${typeLabel}) para ${post} em ${day}.`, logsList);
+        if (finalType === 'PERM' && prevCell) {
+          const swap: SwapRecord = {
+            id: `swap-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            day, post,
+            originalMilitaryId: prevCell.militaryId,
+            originalMilitaryName: prevCell.militaryName,
+            originalRank: prevCell.rank,
+            originalType: prevCell.type,
+            replacementMilitaryId: mil.id,
+            replacementMilitaryName: mil.name.toUpperCase(),
+            replacementRank: mil.rank,
+            status: 'CONFIRMADA',
+            createdAt: new Date().toISOString()
+          };
+          nextSwaps = [swap, ...swaps];
+          logsList = addLog(`Permuta registrada em ${day} / ${post}: ${prevCell.rank}. ${prevCell.militaryName} por ${mil.rank}. ${mil.name}.`, logsList);
+          auditEvent = createAuditEvent({
+            module: 'Permutas', action: 'PERMUTA', entityType: 'Permuta', entityId: swap.id,
+            summary: `Permuta registrada para ${post} em ${day}.`,
+            previousValue: `${prevCell.rank} ${prevCell.militaryName}`,
+            newValue: `${mil.rank} ${mil.name.toUpperCase()}`
+          });
+        } else {
+          const typeLabel = finalType === 'EV' ? 'Escala Vermelha' : finalType === 'DISP' ? 'Dispensa (LTS)' : finalType;
+          logsList = addLog(`${mil.rank}. ${mil.name} escalado manualmente (${typeLabel}) para ${post} em ${day}.`, logsList);
+          auditEvent = createAuditEvent({
+            module: 'Escalas', action: 'ALTERACAO', entityType: 'Posto de escala', entityId: `${day}:${post}`,
+            summary: `${mil.rank} ${mil.name} designado para ${post} em ${day}.`,
+            previousValue: prevCell ? `${prevCell.rank} ${prevCell.militaryName}` : 'Vago',
+            newValue: `${mil.rank} ${mil.name.toUpperCase()}`
+          });
+        }
       }
     }
-    if (!saveState(updatedMilList, absences, updatedRoster, logsList, customHolidays)) return;
+    if (!saveState(updatedMilList, absences, updatedRoster, logsList, customHolidays, { swaps: nextSwaps, auditEvent })) return;
     setIsAssigning(false);
     setSelectedCell(null);
     setModalSearch('');
-    showToast('Escala atualizada com sucesso!');
+    showToast(selectedAssignType === 'PERM' ? 'Permuta registrada e escala atualizada.' : 'Escala atualizada com sucesso!');
   };
 
   const handleClearRoster = () => {
@@ -965,17 +1142,16 @@ export default function RosterApp() {
   const totalMedicalAway = new Set(absences.filter(a =>
     resolveAbsenceStatus(a) === 'ATIVO' && (a.type.includes('LTS') || a.type.includes('Atestado'))
   ).map(a => a.militaryId)).size;
-  const pendingSwaps = Object.values(roster)
-    .flatMap(dayObj => Object.values(dayObj))
-    .filter(cell => cell && cell.type === 'PERM').length;
+  const pendingSwaps = swaps.filter(item => item.status === 'CONFIRMADA').length;
 
   const { rate: complianceRate } = rosterCompliance(roster);
 
-  const operationalMeatItems = cardapioCloud.state.records.flatMap(item => gerarListaSaqueCarnes(item.dias));
+  const operationalCardapios = cardapioCloud.state.records.filter(item => !item.archivedAt);
+  const operationalMeatItems = operationalCardapios.flatMap(item => gerarListaSaqueCarnes(item.dias));
   const operationalCalendar = buildOperationalCalendar({
     roster,
     absences,
-    cardapios: cardapioCloud.state.records,
+    cardapios: operationalCardapios,
     meatItems: operationalMeatItems,
     horizonDays: 14,
   });
@@ -983,7 +1159,7 @@ export default function RosterApp() {
     militaryList,
     absences,
     roster,
-    cardapios: cardapioCloud.state.records,
+    cardapios: operationalCardapios,
     rosterPending: rosterCloud.state.pending,
     cardapioPending: cardapioCloud.state.pending
   });
@@ -994,6 +1170,17 @@ export default function RosterApp() {
       ...operationalCalendar.alerts,
     ]),
   };
+
+  // Configured posts plus historical assigned posts stay visible for traceability.
+  const historicalAssignedPosts = Object.values(roster).flatMap(day =>
+    Object.entries(day).filter(([, cell]) => cell !== null).map(([post]) => post)
+  );
+  const rosterPostsForDisplay = Array.from(new Set([...adminSettings.rosterPosts, ...historicalAssignedPosts]));
+  const absenceTypesForDisplay = Array.from(new Set([...adminSettings.absenceTypes, ...absences.map(item => item.type)]));
+  const specialtiesForDisplay = Array.from(new Set([
+    ...adminSettings.specialties,
+    ...militaryList.flatMap(item => [item.specialty, item.specialtySecondary || '']).filter(Boolean)
+  ]));
 
   // Filter roster for display on Dashboard (Weekends & Custom Holidays)
   const daysToShow = Object.keys(roster)
@@ -1108,6 +1295,17 @@ export default function RosterApp() {
             <UtensilsCrossed className="w-4 h-4" />
             <span>Cardápio Semanal</span>
           </button>
+
+          <button
+            onClick={() => switchTab('profissional')}
+            className={cn(
+              "w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-all text-left",
+              activeTab === 'profissional' ? "bg-emerald-950/40 text-emerald-300 border-l-4 border-emerald-600 font-semibold bg-slate-900" : "text-slate-400 hover:bg-slate-900/40 hover:text-slate-200"
+            )}
+          >
+            <History className="w-4 h-4" />
+            <span>Fluxos Profissionais</span>
+          </button>
         </nav>
 
         {/* Sidebar Footer */}
@@ -1145,12 +1343,13 @@ export default function RosterApp() {
               {activeTab === 'efetivo' && 'Gerenciamento do Efetivo Militar'}
               {activeTab === 'afastamentos' && 'Gestão de Afastamentos'}
               {activeTab === 'cardapio' && 'Cardápio Semanal de Aprovisionamento'}
+              {activeTab === 'profissional' && 'Fluxos Profissionais e Histórico'}
             </h2>
           </div>
 
           <div className="flex items-center gap-4">
             {/* Context-aware Search bar */}
-            {activeTab !== 'cardapio' && activeTab !== 'inicio' && <div className="relative max-w-xs hidden md:block">
+            {activeTab !== 'cardapio' && activeTab !== 'inicio' && activeTab !== 'profissional' && <div className="relative max-w-xs hidden md:block">
               <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <input 
                 type="text" 
@@ -1201,7 +1400,7 @@ export default function RosterApp() {
               )}
             </div>
 
-            <button className="p-2 text-slate-400 hover:bg-slate-100 rounded-full transition-colors">
+            <button onClick={() => switchTab('profissional')} className="p-2 text-slate-400 hover:bg-slate-100 rounded-full transition-colors" title="Configurações administrativas">
               <Settings className="w-5 h-5" />
             </button>
           </div>
@@ -1295,16 +1494,13 @@ export default function RosterApp() {
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                   <div className="flex flex-col gap-1">
                     <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Função</label>
-                    <select 
+                    <select
                       value={filterFunction}
                       onChange={e => setFilterFunction(e.target.value)}
                       className="border border-slate-200 rounded-lg text-xs py-2 px-3 focus:outline-none focus:ring-1 focus:ring-emerald-800 bg-white"
                     >
                       <option>Todas as Funções</option>
-                      <option>Cozinheiro de Dia</option>
-                      <option>Copeiro de Dia</option>
-                      <option>Auxiliar do Copeiro de Dia</option>
-                      <option>Ceia de Dia</option>
+                      {rosterPostsForDisplay.map(post => <option key={post} value={post}>{post}</option>)}
                     </select>
                   </div>
 
@@ -1474,7 +1670,7 @@ export default function RosterApp() {
                     <tbody className="divide-y divide-slate-200/80">
                       
                       {/* Grid Rows */}
-                      {['Cozinheiro de Dia', 'Copeiro de Dia', 'Auxiliar do Copeiro de Dia', 'Ceia de Dia'].map(post => {
+                      {rosterPostsForDisplay.map(post => {
                         if (filterFunction !== 'Todas as Funções' && filterFunction !== post) return null;
 
                         return (
@@ -1619,10 +1815,7 @@ export default function RosterApp() {
                                   onChange={(e) => handleToggleSpecialty(m.id, e.target.value)}
                                   className="px-2 py-1 border border-slate-200 rounded-lg text-xs font-semibold focus:ring-2 focus:ring-slate-900 outline-hidden bg-white shadow-2xs"
                                 >
-                                  <option value="Cozinheiro de Dia">Cozinheiro de Dia</option>
-                                  <option value="Copeiro de Dia">Copeiro de Dia</option>
-                                  <option value="Auxiliar do Copeiro de Dia">Auxiliar do Copeiro de Dia</option>
-                                  <option value="Ceia de Dia">Ceia de Dia</option>
+                                  {specialtiesForDisplay.map(item => <option key={item} value={item}>{item}</option>)}
                                 </select>
                               </td>
                               <td className="p-3 text-center">
@@ -1664,7 +1857,7 @@ export default function RosterApp() {
                         <div className="bg-white/10 p-3.5 rounded-lg">
                           <label className="block text-[10px] font-bold text-emerald-200 tracking-wider mb-1">POSTOS OPERACIONAIS</label>
                           <div className="flex items-center justify-between">
-                            <span className="text-lg font-bold">4 Funções / Dia</span>
+                            <span className="text-lg font-bold">{adminSettings.rosterPosts.length} Funções / Dia</span>
                             <span className="text-xs text-emerald-200/80">Alocação 100% manual</span>
                           </div>
                         </div>
@@ -1904,17 +2097,12 @@ export default function RosterApp() {
                     {/* Type select */}
                     <div className="space-y-1">
                       <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Tipo de Afastamento</label>
-                      <select 
+                      <select
                         value={absenceType}
                         onChange={e => setAbsenceType(e.target.value)}
                         className="w-full border border-slate-200 rounded-lg text-xs p-2.5 bg-slate-50 focus:outline-none focus:ring-1 focus:ring-emerald-800"
                       >
-                        <option>Férias</option>
-                        <option>LTS / Atestado Médico</option>
-                        <option>Curso / Estágio</option>
-                        <option>Missão Externa</option>
-                        <option>Dispensa Recompensa</option>
-                        <option>Núpcias / Luto</option>
+                        {adminSettings.absenceTypes.map(item => <option key={item} value={item}>{item}</option>)}
                       </select>
                     </div>
 
@@ -2014,18 +2202,13 @@ export default function RosterApp() {
                           className="pl-8 pr-3 py-1 bg-white border border-slate-200 rounded-lg text-xs text-slate-700 w-36 sm:w-44 focus:outline-none focus:ring-1 focus:ring-emerald-800"
                         />
                       </div>
-                      <select 
+                      <select
                         value={absenceTypeFilter}
                         onChange={e => setAbsenceTypeFilter(e.target.value)}
                         className="px-2.5 py-1 bg-white border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-emerald-800 font-medium"
                       >
                         <option value="Todos">Todos os Tipos</option>
-                        <option value="Férias">Férias</option>
-                        <option value="LTS / Atestado Médico">LTS / Atestado</option>
-                        <option value="Licença Prêmio">Licença Prêmio</option>
-                        <option value="Missão Oficial">Missão Oficial</option>
-                        <option value="Curso / Instrução">Curso / Instrução</option>
-                        <option value="Dispensa Regulamentar">Dispensa</option>
+                        {absenceTypesForDisplay.map(item => <option key={item} value={item}>{item}</option>)}
                       </select>
                     </div>
                   </div>
@@ -2180,10 +2363,7 @@ export default function RosterApp() {
                         className="px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold focus:ring-2 focus:ring-slate-900 outline-hidden bg-white shadow-xs"
                       >
                         <option value="Todas as Funções">Funções: Todas</option>
-                        <option value="Cozinheiro de Dia">Cozinheiro de Dia</option>
-                        <option value="Copeiro de Dia">Copeiro de Dia</option>
-                        <option value="Auxiliar do Copeiro de Dia">Auxiliar do Copeiro</option>
-                        <option value="Ceia de Dia">Ceia de Dia</option>
+                        {specialtiesForDisplay.map(item => <option key={item} value={item}>{item}</option>)}
                       </select>
 
                       <select
@@ -2309,10 +2489,7 @@ export default function RosterApp() {
                         onChange={e => setNewMilRank(e.target.value)}
                         className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-medium focus:ring-2 focus:ring-slate-900 outline-hidden bg-white"
                       >
-                        <option value="Ten">Tenente (Ten)</option>
-                        <option value="Sgt">Sargento (Sgt)</option>
-                        <option value="Cb">Cabo (Cb)</option>
-                        <option value="Sd">Soldado (Sd)</option>
+                        {adminSettings.ranks.map(item => <option key={item} value={item}>{item}</option>)}
                       </select>
                     </div>
 
@@ -2361,10 +2538,7 @@ export default function RosterApp() {
                         onChange={e => setNewMilSpecialty(e.target.value)}
                         className="w-full px-2.5 py-2 border border-slate-200 rounded-lg text-xs font-medium focus:ring-2 focus:ring-slate-900 outline-hidden bg-white"
                       >
-                        <option value="Cozinheiro de Dia">Cozinheiro de Dia</option>
-                        <option value="Copeiro de Dia">Copeiro de Dia</option>
-                        <option value="Auxiliar do Copeiro de Dia">Auxiliar do Copeiro de Dia</option>
-                        <option value="Ceia de Dia">Ceia de Dia</option>
+                        {adminSettings.specialties.map(item => <option key={item} value={item}>{item}</option>)}
                       </select>
                     </div>
 
@@ -2376,10 +2550,7 @@ export default function RosterApp() {
                         className="w-full px-2.5 py-2 border border-slate-200 rounded-lg text-xs font-medium focus:ring-2 focus:ring-slate-900 outline-hidden bg-white"
                       >
                         <option value="Nenhuma">Nenhuma</option>
-                        <option value="Cozinheiro de Dia">Cozinheiro de Dia</option>
-                        <option value="Copeiro de Dia">Copeiro de Dia</option>
-                        <option value="Auxiliar do Copeiro de Dia">Auxiliar do Copeiro de Dia</option>
-                        <option value="Ceia de Dia">Ceia de Dia</option>
+                        {adminSettings.specialties.map(item => <option key={item} value={item}>{item}</option>)}
                       </select>
                     </div>
                   </div>
@@ -2421,7 +2592,22 @@ export default function RosterApp() {
 
           {/* TAB 4: CARDÁPIO SEMANAL (APROVISIONAMENTO HGeSM) */}
           {activeTab === 'cardapio' && (
-            <CardapioSemanal onNotify={showToast} />
+            <CardapioSemanal onNotify={showToast} onAudit={recordCardapioAudit} />
+          )}
+
+          {/* BLOCO 3: FLUXOS PROFISSIONAIS */}
+          {activeTab === 'profissional' && (
+            <ProfessionalFlows
+              auditTrail={auditTrail}
+              swaps={swaps}
+              settings={adminSettings}
+              cardapios={cardapioCloud.state.records}
+              onCancelSwap={handleCancelSwap}
+              onArchiveCardapio={handleArchiveCardapio}
+              onRestoreCardapio={handleRestoreCardapio}
+              onRestoreVersion={handleRestoreCardapioVersion}
+              onSaveSettings={handleSaveAdminSettings}
+            />
           )}
 
         </div>
