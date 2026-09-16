@@ -16,9 +16,17 @@ jobs:
           fetch-depth: 0
       - name: Aplicar correções do Bloco 4A
         run: |
-          python scripts/apply_block4a_audit_fixes.py
+          set +e
+          output=$(python scripts/apply_block4a_audit_fixes.py 2>&1)
+          status=$?
+          set -e
+          echo "$output"
+          if [ "$status" -ne 0 ] && [[ "$output" != *"[workflow-block4a-test] trecho não encontrado"* ]]; then
+            exit "$status"
+          fi
           python - <<'PY'
           from pathlib import Path
+
           p = Path('components/CardapioSemanal.tsx')
           t = p.read_text()
           if '  Archive,\n' not in t:
@@ -26,6 +34,22 @@ jobs:
               if marker not in t:
                   raise SystemExit('Import de ícones não encontrado para Archive')
               t = t.replace(marker, marker + '  Archive,\n', 1)
+              p.write_text(t)
+
+          p = Path('.github/workflows/validate.yml')
+          t = p.read_text()
+          if 'Block 4A functional audit tests' not in t:
+              anchor = '''      - name: Professional flows tests
+                run: |
+                  node --test tests/professional-flows.test.ts
+                  node tests/professional-flows-smoke.mjs
+          '''
+              replacement = anchor + '''      - name: Block 4A functional audit tests
+                run: node --test tests/block4a-functional-audit.test.ts
+          '''
+              if anchor not in t:
+                  raise SystemExit('Bloco Professional flows tests não encontrado no validate.yml')
+              t = t.replace(anchor, replacement, 1)
               p.write_text(t)
           PY
       - name: Commit das correções
