@@ -16,13 +16,14 @@ jobs:
           fetch-depth: 0
       - name: Aplicar Bloco 4B
         run: |
+          python scripts/prepare_block4b_patch.py
           python scripts/apply_block4b.py
           node --test tests/block4b-navigation.test.ts
       - name: Commit das alterações funcionais
         run: |
-          rm scripts/apply_block4b.py
+          rm scripts/apply_block4b.py scripts/prepare_block4b_patch.py
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app/page.tsx components/CardapioSemanal.tsx components/OperationalDashboard.tsx components/ProfessionalFlows.tsx lib/domain/operational-navigation.ts components/OperationalContextBar.tsx tests/block4b-navigation.test.ts scripts/apply_block4b.py
+          git add app/page.tsx components/CardapioSemanal.tsx components/OperationalDashboard.tsx components/ProfessionalFlows.tsx lib/domain/operational-navigation.ts components/OperationalContextBar.tsx tests/block4b-navigation.test.ts scripts/apply_block4b.py scripts/prepare_block4b_patch.py
           git commit -m "Integrar navegação contextual e fluxos entre módulos no Bloco 4B"
           git push origin HEAD:feature/bloco4b-ux-integracao
