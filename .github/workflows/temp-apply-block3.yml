@@ -14,6 +14,18 @@ jobs:
         with:
           ref: feature/fluxos-profissionais
           fetch-depth: 0
+      - name: Ajustar patch temporariamente
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('scripts/apply_block3_professional_flows.py')
+          t = p.read_text()
+          old = "text = replace_once(text, \"      workflow: {\\n        status: 'EM_ELABORACAO',\", \"      version: 1,\\n      versions: [],\\n      workflow: {\\n        status: 'EM_ELABORACAO',\", 'duplicate version init')"
+          new = "text = text.replace(\"      workflow: {\\n        status: 'EM_ELABORACAO',\", \"      version: 1,\\n      versions: [],\\n      workflow: {\\n        status: 'EM_ELABORACAO',\", 1)"
+          if old not in t:
+              raise SystemExit('trecho temporário não encontrado')
+          p.write_text(t.replace(old, new, 1))
+          PY
       - name: Aplicar Bloco 3
         run: python scripts/apply_block3_professional_flows.py
       - name: Commit Bloco 3
