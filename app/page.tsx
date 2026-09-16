@@ -1176,6 +1176,11 @@ export default function RosterApp() {
     Object.entries(day).filter(([, cell]) => cell !== null).map(([post]) => post)
   );
   const rosterPostsForDisplay = Array.from(new Set([...adminSettings.rosterPosts, ...historicalAssignedPosts]));
+  const absenceTypesForDisplay = Array.from(new Set([...adminSettings.absenceTypes, ...absences.map(item => item.type)]));
+  const specialtiesForDisplay = Array.from(new Set([
+    ...adminSettings.specialties,
+    ...militaryList.flatMap(item => [item.specialty, item.specialtySecondary || '']).filter(Boolean)
+  ]));
 
   // Filter roster for display on Dashboard (Weekends & Custom Holidays)
   const daysToShow = Object.keys(roster)
@@ -1810,7 +1815,7 @@ export default function RosterApp() {
                                   onChange={(e) => handleToggleSpecialty(m.id, e.target.value)}
                                   className="px-2 py-1 border border-slate-200 rounded-lg text-xs font-semibold focus:ring-2 focus:ring-slate-900 outline-hidden bg-white shadow-2xs"
                                 >
-                                  {adminSettings.specialties.map(item => <option key={item} value={item}>{item}</option>)}
+                                  {specialtiesForDisplay.map(item => <option key={item} value={item}>{item}</option>)}
                                 </select>
                               </td>
                               <td className="p-3 text-center">
@@ -2197,18 +2202,13 @@ export default function RosterApp() {
                           className="pl-8 pr-3 py-1 bg-white border border-slate-200 rounded-lg text-xs text-slate-700 w-36 sm:w-44 focus:outline-none focus:ring-1 focus:ring-emerald-800"
                         />
                       </div>
-                      <select 
+                      <select
                         value={absenceTypeFilter}
                         onChange={e => setAbsenceTypeFilter(e.target.value)}
                         className="px-2.5 py-1 bg-white border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-emerald-800 font-medium"
                       >
                         <option value="Todos">Todos os Tipos</option>
-                        <option value="Férias">Férias</option>
-                        <option value="LTS / Atestado Médico">LTS / Atestado</option>
-                        <option value="Licença Prêmio">Licença Prêmio</option>
-                        <option value="Missão Oficial">Missão Oficial</option>
-                        <option value="Curso / Instrução">Curso / Instrução</option>
-                        <option value="Dispensa Regulamentar">Dispensa</option>
+                        {absenceTypesForDisplay.map(item => <option key={item} value={item}>{item}</option>)}
                       </select>
                     </div>
                   </div>
@@ -2363,10 +2363,7 @@ export default function RosterApp() {
                         className="px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold focus:ring-2 focus:ring-slate-900 outline-hidden bg-white shadow-xs"
                       >
                         <option value="Todas as Funções">Funções: Todas</option>
-                        <option value="Cozinheiro de Dia">Cozinheiro de Dia</option>
-                        <option value="Copeiro de Dia">Copeiro de Dia</option>
-                        <option value="Auxiliar do Copeiro de Dia">Auxiliar do Copeiro</option>
-                        <option value="Ceia de Dia">Ceia de Dia</option>
+                        {specialtiesForDisplay.map(item => <option key={item} value={item}>{item}</option>)}
                       </select>
 
                       <select
@@ -2553,10 +2550,7 @@ export default function RosterApp() {
                         className="w-full px-2.5 py-2 border border-slate-200 rounded-lg text-xs font-medium focus:ring-2 focus:ring-slate-900 outline-hidden bg-white"
                       >
                         <option value="Nenhuma">Nenhuma</option>
-                        <option value="Cozinheiro de Dia">Cozinheiro de Dia</option>
-                        <option value="Copeiro de Dia">Copeiro de Dia</option>
-                        <option value="Auxiliar do Copeiro de Dia">Auxiliar do Copeiro de Dia</option>
-                        <option value="Ceia de Dia">Ceia de Dia</option>
+                        {adminSettings.specialties.map(item => <option key={item} value={item}>{item}</option>)}
                       </select>
                     </div>
                   </div>
