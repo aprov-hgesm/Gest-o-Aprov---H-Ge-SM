@@ -44,6 +44,10 @@ jobs:
         run: |
           node --test tests/block4a-functional-audit.test.ts
           node tests/block4a-ui-smoke.mjs
+      - name: Block 4B navigation and integration tests
+        run: |
+          node --test tests/block4b-navigation.test.ts
+          node tests/block4b-ui-smoke.mjs
       - name: Manual roster selection rules
         run: node tests/manual-roster-selection-smoke.mjs
       - name: Patient meat requisition regression

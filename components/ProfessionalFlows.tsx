@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { WeeklyCardapioDoc, WorkflowStatus } from '@/components/CardapioSemanal';
+import type { OperationalTab, ProfessionalSection } from '@/lib/domain/operational-navigation';
 import {
   normalizeAdminSettings,
   resolveSwapOperationalStatus,
@@ -53,9 +54,9 @@ interface Props {
   onRestoreCardapio: (id: string) => void;
   onRestoreVersion: (cardapioId: string, versionId: string, reason: string) => void;
   onSaveSettings: (settings: AdminSettings) => void;
+  initialSection?: ProfessionalSection;
+  onNavigate?: (tab: OperationalTab) => void;
 }
-
-type Section = 'historico' | 'permutas' | 'cardapios' | 'configuracoes';
 
 const moduleOptions: Array<'Todos' | AuditModule> = [
   'Todos', 'Escalas', 'Efetivo', 'Afastamentos', 'Cardápio', 'Permutas', 'Configurações', 'Arquivamento', 'Sistema'
@@ -88,8 +89,10 @@ export default function ProfessionalFlows({
   onRestoreCardapio,
   onRestoreVersion,
   onSaveSettings,
+  initialSection = 'historico',
+  onNavigate,
 }: Props) {
-  const [section, setSection] = useState<Section>('historico');
+  const [section, setSection] = useState<ProfessionalSection>(initialSection);
   const [search, setSearch] = useState('');
   const [moduleFilter, setModuleFilter] = useState<'Todos' | AuditModule>('Todos');
   const [draft, setDraft] = useState(() => normalizeAdminSettings(settings));
@@ -97,6 +100,10 @@ export default function ProfessionalFlows({
   const [absenceText, setAbsenceText] = useState(settings.absenceTypes.join('\n'));
   const [specialtyText, setSpecialtyText] = useState(settings.specialties.join('\n'));
   const [rankText, setRankText] = useState(settings.ranks.join('\n'));
+
+  useEffect(() => {
+    setSection(initialSection);
+  }, [initialSection]);
 
   useEffect(() => {
     const normalized = normalizeAdminSettings(settings);
@@ -122,7 +129,7 @@ export default function ProfessionalFlows({
   const versionCount = professionalCardapios.reduce((sum, item) => sum + (item.versions?.length || 0), 0);
   const activeSwaps = swaps.filter(item => resolveSwapOperationalStatus(item) === 'ATIVA').length;
 
-  const tabs: Array<{ id: Section; label: string; icon: React.ComponentType<{ className?: string }>; badge?: number }> = [
+  const tabs: Array<{ id: ProfessionalSection; label: string; icon: React.ComponentType<{ className?: string }>; badge?: number }> = [
     { id: 'historico', label: 'Histórico e Auditoria', icon: History, badge: auditTrail.length },
     { id: 'permutas', label: 'Permutas', icon: ArrowLeftRight, badge: activeSwaps },
     { id: 'cardapios', label: 'Versões e Arquivo', icon: FileClock, badge: archivedCount + versionCount },
@@ -151,10 +158,15 @@ export default function ProfessionalFlows({
           <h3 className="text-3xl font-bold text-slate-900 tracking-tight">Rastreabilidade e governança operacional</h3>
           <p className="text-sm text-slate-500 mt-1 max-w-3xl">Histórico estruturado, permutas rastreáveis, versionamento de cardápios, arquivamento/restauração e parâmetros administrativos.</p>
         </div>
-        <div className="grid grid-cols-3 gap-2 text-center shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
+          {onNavigate && (
+            <button onClick={() => onNavigate('inicio')} className="px-3 py-2 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-600 hover:bg-slate-50">Central Operacional</button>
+          )}
+          <div className="grid grid-cols-3 gap-2 text-center">
           <div className="rounded-xl border border-slate-200 bg-white px-3 py-2"><div className="text-lg font-bold text-slate-900">{auditTrail.length}</div><div className="text-[10px] text-slate-500">eventos</div></div>
           <div className="rounded-xl border border-slate-200 bg-white px-3 py-2"><div className="text-lg font-bold text-slate-900">{activeSwaps}</div><div className="text-[10px] text-slate-500">permutas</div></div>
           <div className="rounded-xl border border-slate-200 bg-white px-3 py-2"><div className="text-lg font-bold text-slate-900">{archivedCount}</div><div className="text-[10px] text-slate-500">arquivados</div></div>
+          </div>
         </div>
       </div>
 

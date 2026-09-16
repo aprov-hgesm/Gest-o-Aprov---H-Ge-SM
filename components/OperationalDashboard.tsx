@@ -21,8 +21,8 @@ import { localIsoDate, resolveAbsenceStatus, type AbsenceStatus } from '@/lib/do
 import { gerarListaSaqueCarnes, type WeeklyCardapioDoc } from '@/components/CardapioSemanal';
 import OperationalCalendar from '@/components/OperationalCalendar';
 import type { OperationalCalendarDay } from '@/lib/domain/operational-calendar';
-
-export type OperationalTab = 'inicio' | 'dashboard' | 'efetivo' | 'afastamentos' | 'cardapio' | 'profissional';
+import type { OperationalTab } from '@/lib/domain/operational-navigation';
+export type { OperationalTab } from '@/lib/domain/operational-navigation';
 
 export interface OperationalMilitary {
   id: string;
@@ -366,10 +366,10 @@ export default function OperationalDashboard({
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-        <MetricCard icon={UserCheck} label="Efetivo disponível" value={snapshot.availableMilitary} detail={`${snapshot.absentMilitary} afastado(s) hoje`} />
-        <MetricCard icon={CircleAlert} label="Postos vagos" value={snapshot.vacantPostsNext7} detail="Próximos 7 dias de escala" attention={snapshot.vacantPostsNext7 > 0} />
-        <MetricCard icon={Beef} label="Saque de carnes hoje" value={`${snapshot.meatKgToday.toLocaleString('pt-BR')} kg`} detail={`${snapshot.meatItemsToday} item(ns) para retirada`} />
-        <MetricCard icon={UtensilsCrossed} label="Prontidão do cardápio" value={snapshot.cardapioReadiness === null ? '—' : `${snapshot.cardapioReadiness}%`} detail={statusLabel} attention={(snapshot.cardapioReadiness ?? 100) < 100} />
+        <MetricCard icon={UserCheck} label="Efetivo disponível" value={snapshot.availableMilitary} detail={`${snapshot.absentMilitary} afastado(s) hoje`} onClick={() => onNavigate('efetivo')} />
+        <MetricCard icon={CircleAlert} label="Postos vagos" value={snapshot.vacantPostsNext7} detail="Próximos 7 dias de escala" attention={snapshot.vacantPostsNext7 > 0} onClick={() => onNavigate('dashboard')} />
+        <MetricCard icon={Beef} label="Saque de carnes hoje" value={`${snapshot.meatKgToday.toLocaleString('pt-BR')} kg`} detail={`${snapshot.meatItemsToday} item(ns) para retirada`} onClick={() => onNavigate('cardapio')} />
+        <MetricCard icon={UtensilsCrossed} label="Prontidão do cardápio" value={snapshot.cardapioReadiness === null ? '—' : `${snapshot.cardapioReadiness}%`} detail={statusLabel} attention={(snapshot.cardapioReadiness ?? 100) < 100} onClick={() => onNavigate('cardapio')} />
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-5 gap-5">
@@ -475,22 +475,24 @@ function MetricCard({
   label,
   value,
   detail,
-  attention = false
+  attention = false,
+  onClick,
 }: {
   icon: React.ComponentType<{ className?: string }>;
   label: string;
   value: React.ReactNode;
   detail: string;
   attention?: boolean;
+  onClick?: () => void;
 }) {
   return (
-    <div className={cn('rounded-2xl border bg-white p-4 shadow-sm', attention ? 'border-amber-200' : 'border-slate-200')}>
+    <button type="button" onClick={onClick} className={cn('w-full text-left rounded-2xl border bg-white p-4 shadow-sm transition-all', onClick && 'hover:-translate-y-0.5 hover:shadow-md cursor-pointer', attention ? 'border-amber-200' : 'border-slate-200')}>
       <div className="flex items-center justify-between gap-3">
         <span className="text-xs font-semibold text-slate-500">{label}</span>
         <span className={cn('p-2 rounded-lg', attention ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700')}><Icon className="w-4 h-4" /></span>
       </div>
       <div className="text-2xl font-bold text-slate-900 mt-3">{value}</div>
       <div className="text-[11px] text-slate-500 mt-1">{detail}</div>
-    </div>
+    </button>
   );
 }
