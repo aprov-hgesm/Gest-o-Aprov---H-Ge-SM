@@ -614,7 +614,7 @@ export default function RosterApp() {
         militaryId: swap.originalMilitaryId,
         militaryName: swap.originalMilitaryName,
         rank: swap.originalRank,
-        type: 'EV'
+        type: swap.originalType
       };
       restored = true;
     }
@@ -791,6 +791,7 @@ export default function RosterApp() {
             originalMilitaryId: prevCell.militaryId,
             originalMilitaryName: prevCell.militaryName,
             originalRank: prevCell.rank,
+            originalType: prevCell.type,
             replacementMilitaryId: mil.id,
             replacementMilitaryName: mil.name.toUpperCase(),
             replacementRank: mil.rank,
@@ -1170,6 +1171,12 @@ export default function RosterApp() {
     ]),
   };
 
+  // Configured posts plus historical assigned posts stay visible for traceability.
+  const historicalAssignedPosts = Object.values(roster).flatMap(day =>
+    Object.entries(day).filter(([, cell]) => cell !== null).map(([post]) => post)
+  );
+  const rosterPostsForDisplay = Array.from(new Set([...adminSettings.rosterPosts, ...historicalAssignedPosts]));
+
   // Filter roster for display on Dashboard (Weekends & Custom Holidays)
   const daysToShow = Object.keys(roster)
     .sort((a, b) => ddmmyyyyToIso(a).localeCompare(ddmmyyyyToIso(b)))
@@ -1482,11 +1489,13 @@ export default function RosterApp() {
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                   <div className="flex flex-col gap-1">
                     <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Função</label>
-                    <select 
+                    <select
                       value={filterFunction}
-                      onChange={e =>
+                      onChange={e => setFilterFunction(e.target.value)}
+                      className="border border-slate-200 rounded-lg text-xs py-2 px-3 focus:outline-none focus:ring-1 focus:ring-emerald-800 bg-white"
+                    >
                       <option>Todas as Funções</option>
-                      {adminSettings.rosterPosts.map(post => <option key={post} value={post}>{post}</option>)}
+                      {rosterPostsForDisplay.map(post => <option key={post} value={post}>{post}</option>)}
                     </select>
                   </div>
 
@@ -1656,7 +1665,7 @@ export default function RosterApp() {
                     <tbody className="divide-y divide-slate-200/80">
                       
                       {/* Grid Rows */}
-                      {adminSettings.rosterPosts.map(post => {
+                      {rosterPostsForDisplay.map(post => {
                         if (filterFunction !== 'Todas as Funções' && filterFunction !== post) return null;
 
                         return (
@@ -1798,7 +1807,9 @@ export default function RosterApp() {
                               <td className="p-3">
                                 <select
                                   value={m.specialty}
-                                  onChange={(e) =>
+                                  onChange={(e) => handleToggleSpecialty(m.id, e.target.value)}
+                                  className="px-2 py-1 border border-slate-200 rounded-lg text-xs font-semibold focus:ring-2 focus:ring-slate-900 outline-hidden bg-white shadow-2xs"
+                                >
                                   {adminSettings.specialties.map(item => <option key={item} value={item}>{item}</option>)}
                                 </select>
                               </td>
@@ -2081,9 +2092,11 @@ export default function RosterApp() {
                     {/* Type select */}
                     <div className="space-y-1">
                       <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Tipo de Afastamento</label>
-                      <select 
+                      <select
                         value={absenceType}
-                        onChange={e =>
+                        onChange={e => setAbsenceType(e.target.value)}
+                        className="w-full border border-slate-200 rounded-lg text-xs p-2.5 bg-slate-50 focus:outline-none focus:ring-1 focus:ring-emerald-800"
+                      >
                         {adminSettings.absenceTypes.map(item => <option key={item} value={item}>{item}</option>)}
                       </select>
                     </div>
@@ -2476,7 +2489,9 @@ export default function RosterApp() {
                       <label className="text-xs font-semibold text-slate-700 block">Posto/Graduação</label>
                       <select
                         value={newMilRank}
-                        onChange={e =>
+                        onChange={e => setNewMilRank(e.target.value)}
+                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-medium focus:ring-2 focus:ring-slate-900 outline-hidden bg-white"
+                      >
                         {adminSettings.ranks.map(item => <option key={item} value={item}>{item}</option>)}
                       </select>
                     </div>
@@ -2523,7 +2538,9 @@ export default function RosterApp() {
                       <label className="text-[10px] font-semibold text-slate-700 block">Função Principal</label>
                       <select
                         value={newMilSpecialty}
-                        onChange={e =>
+                        onChange={e => setNewMilSpecialty(e.target.value)}
+                        className="w-full px-2.5 py-2 border border-slate-200 rounded-lg text-xs font-medium focus:ring-2 focus:ring-slate-900 outline-hidden bg-white"
+                      >
                         {adminSettings.specialties.map(item => <option key={item} value={item}>{item}</option>)}
                       </select>
                     </div>
