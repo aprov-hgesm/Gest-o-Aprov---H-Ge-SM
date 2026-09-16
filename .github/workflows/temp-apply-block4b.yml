@@ -22,35 +22,39 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.4.2'
-      - name: Corrigir fechamento do card métrico
+      - name: Corrigir tags JSX do dashboard
         run: |
           python - <<'PY'
           from pathlib import Path
           p = Path('components/OperationalDashboard.tsx')
           t = p.read_text()
-          old = '''      <div className="text-[11px] text-slate-500 mt-1">{detail}</div>
+          alerts_bad = '''        ))}
               </div>
-            );
-          }'''
-          new = '''      <div className="text-[11px] text-slate-500 mt-1">{detail}</div>
-              </button>
-            );
-          }'''
-          if old not in t:
-              old = '''      <div className="text-[11px] text-slate-500 mt-1">{detail}</div>
+            </button>
+          );
+        }
+
+        export default function OperationalDashboard'''
+          alerts_good = '''        ))}
               </div>
+            </div>
           );
-          }'''
-              new = '''      <div className="text-[11px] text-slate-500 mt-1">{detail}</div>
-              </button>
-          );
-          }'''
-          if old not in t:
-              old = '      <div className="text-[11px] text-slate-500 mt-1">{detail}</div>\n    </div>\n  );\n}'
-              new = '      <div className="text-[11px] text-slate-500 mt-1">{detail}</div>\n    </button>\n  );\n}'
-          if old not in t:
+        }
+
+        export default function OperationalDashboard'''
+          if alerts_bad not in t:
+              alerts_bad = '        ))}\n      </div>\n    </button>\n  );\n}\n\nexport default function OperationalDashboard'
+              alerts_good = '        ))}\n      </div>\n    </div>\n  );\n}\n\nexport default function OperationalDashboard'
+          if alerts_bad not in t:
+              raise SystemExit('Fechamento do painel de alertas não encontrado')
+          t = t.replace(alerts_bad, alerts_good, 1)
+
+          metric_bad = '      <div className="text-[11px] text-slate-500 mt-1">{detail}</div>\n    </div>\n  );\n}'
+          metric_good = '      <div className="text-[11px] text-slate-500 mt-1">{detail}</div>\n    </button>\n  );\n}'
+          if metric_bad not in t:
               raise SystemExit('Fechamento do MetricCard não encontrado')
-          p.write_text(t.replace(old, new, 1))
+          t = t.replace(metric_bad, metric_good, 1)
+          p.write_text(t)
           PY
       - name: Install locked dependencies
         run: bun install --frozen-lockfile
@@ -67,5 +71,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add components/OperationalDashboard.tsx
-          git commit -m "Corrigir card métrico interativo do Bloco 4B"
+          git commit -m "Corrigir tags JSX do dashboard no Bloco 4B"
           git push origin HEAD:feature/bloco4b-ux-integracao
