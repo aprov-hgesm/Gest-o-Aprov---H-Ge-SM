@@ -1,0 +1,25 @@
+name: Finalize Block 3 UI
+on:
+  push:
+    branches:
+      - feature/fluxos-profissionais
+permissions:
+  contents: write
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: feature/fluxos-profissionais
+          fetch-depth: 0
+      - name: Refinar interface administrativa
+        run: python scripts/finalize_block3_ui.py
+      - name: Commit refinamentos
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/page.tsx
+          git commit -m "Finalizar integrações administrativas do Bloco 3"
+          git push origin HEAD:feature/fluxos-profissionais
