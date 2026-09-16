@@ -12,6 +12,7 @@ import {
   Plus, 
   Copy, 
   RotateCcw, 
+  Archive,
   X, 
   Check, 
   UserCheck, 
@@ -889,6 +890,10 @@ export default function CardapioSemanal({ onNotify, onAudit }: CardapioSemanalPr
 
   const currentCardapio: WeeklyCardapioDoc = 
     cardapiosList.find(c => c.id === selectedCardapioId) || cardapiosList[0] || initialWeeklyCardapio;
+  const isArchivedCardapio = Boolean(currentCardapio.archivedAt);
+  useEffect(() => {
+    if (isArchivedCardapio && activeSubView === 'EDITOR') setActiveSubView('A4');
+  }, [isArchivedCardapio, activeSubView]);
 
   const showToast = (msg: string, type: 'success' | 'info' = 'success') => {
     if (onNotify) {
@@ -1267,6 +1272,9 @@ export default function CardapioSemanal({ onNotify, onAudit }: CardapioSemanalPr
       dataFim: nextSunIso,
       version: 1,
       versions: [],
+      archivedAt: undefined,
+      archiveReason: undefined,
+      lastChangeReason: undefined,
       workflow: {
         status: 'EM_ELABORACAO',
         conferido: {
@@ -1484,6 +1492,9 @@ export default function CardapioSemanal({ onNotify, onAudit }: CardapioSemanalPr
                   {currentCardapio.workflow.status === 'FINALIZADO' && 'Finalizado / Oficial'}
                 </span>
               </div>
+              {isArchivedCardapio && (
+                <span className="px-2.5 py-1 rounded-full text-xs font-bold border bg-slate-100 text-slate-700 border-slate-300">Arquivado · somente leitura</span>
+              )}
               {(() => {
                 const readiness = getCardapioReadiness(currentCardapio);
                 return (
@@ -1506,7 +1517,11 @@ export default function CardapioSemanal({ onNotify, onAudit }: CardapioSemanalPr
           <div className="flex flex-wrap items-center gap-2">
             
             {/* Advance status button */}
-            {currentCardapio.workflow.status !== 'FINALIZADO' ? (
+            {isArchivedCardapio ? (
+              <button disabled className="flex items-center gap-2 px-3.5 py-2 bg-slate-100 text-slate-500 rounded-lg font-bold text-xs border border-slate-200 cursor-not-allowed" title="Restaure o cardápio em Fluxos Profissionais para voltar a editá-lo">
+                <Archive className="w-4 h-4" /><span>Arquivado · somente leitura</span>
+              </button>
+            ) : currentCardapio.workflow.status !== 'FINALIZADO' ? (
               <button
                 onClick={handleAdvanceWorkflow}
                 className="flex items-center gap-2 px-3.5 py-2 bg-[#1e382b] hover:bg-[#15271e] text-white rounded-lg font-bold text-xs transition-all shadow-xs"
@@ -1572,7 +1587,8 @@ export default function CardapioSemanal({ onNotify, onAudit }: CardapioSemanalPr
             {/* Edit institutional settings */}
             <button
               onClick={() => setIsInstitutionalModalOpen(true)}
-              className="flex items-center gap-2 px-3 py-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 rounded-lg font-medium text-xs transition-all"
+              disabled={isArchivedCardapio}
+              className="flex items-center gap-2 px-3 py-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 rounded-lg font-medium text-xs transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               title="Editar cabeçalho, assinaturas e observações"
             >
               <Edit3 className="w-3.5 h-3.5 text-slate-500" />
@@ -1604,7 +1620,7 @@ export default function CardapioSemanal({ onNotify, onAudit }: CardapioSemanalPr
             >
               {cardapiosList.map(c => (
                 <option key={c.id} value={c.id}>
-                  {formatCardapioTitle(c.dataInicio, c.dataFim)} ({c.workflow.status.replace('_', ' ')})
+                  {c.archivedAt ? '[ARQUIVADO] ' : ''}{formatCardapioTitle(c.dataInicio, c.dataFim)} ({c.workflow.status.replace('_', ' ')})
                 </option>
               ))}
             </select>
@@ -1651,9 +1667,11 @@ export default function CardapioSemanal({ onNotify, onAudit }: CardapioSemanalPr
               </button>
               <button
                 onClick={() => setActiveSubView('EDITOR')}
+                disabled={isArchivedCardapio}
                 className={cn(
                   "flex items-center gap-1.5 px-3 py-1 rounded-md font-bold transition-all",
-                  activeSubView === 'EDITOR' ? "bg-white text-slate-900 shadow-xs" : "text-slate-600 hover:text-slate-900"
+                  activeSubView === 'EDITOR' ? "bg-white text-slate-900 shadow-xs" : "text-slate-600 hover:text-slate-900",
+                  isArchivedCardapio && "opacity-50 cursor-not-allowed"
                 )}
               >
                 <Edit3 className="w-3.5 h-3.5 text-blue-700" />

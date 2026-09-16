@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { FileDown, X } from 'lucide-react';
 import jsPDF from 'jspdf';
 import { normalizeMilitaryStatuses, resolveAbsenceStatus, rosterCompliance } from '@/lib/domain/roster-integrity';
+import { rosterCellDisplayName } from '@/lib/domain/roster-operations';
 
 type ScaleType = 'EP' | 'EV' | 'Ambas';
 
@@ -230,7 +231,7 @@ function scaleRows(data: RosterDocument) {
       const iso = isoFromDate(day);
       const holiday = holidayMap.get(iso);
       const dateLabel = holiday ? `${brDate(iso)} — ${holiday}` : brDate(iso);
-      const military = cell ? `${cell.rank}. ${cell.militaryName}` : 'VAGO';
+      const military = cell ? rosterCellDisplayName(cell) : 'VAGO';
       const type = cell?.type === 'PERM' ? 'Permuta' : cell?.type === 'DISP' ? 'Dispensa' : cell?.type ?? '—';
       return [dateLabel, post, military, type];
     }));

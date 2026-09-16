@@ -42,9 +42,12 @@ import {
   recalculateDutyCounts, resolveAbsenceStatus, rosterCompliance
 } from '@/lib/domain/roster-integrity';
 import {
-  createAuditEvent, defaultAdminSettings, inferAuditFromLog, normalizeAdminSettings, trimAuditTrail,
+  createAuditEvent, defaultAdminSettings, inferAuditFromLog, normalizeAdminSettings, resolveSwapOperationalStatus, trimAuditTrail,
   type AdminSettings, type AuditEvent, type SwapRecord
 } from '@/lib/domain/professional-flows';
+import {
+  clearRosterDays, reconcileRosterPosts, removeHolidayRosterDay, rosterCellDisplayName, selectRosterDays
+} from '@/lib/domain/roster-operations';
 
 // ==========================================
 // TYPES & SCHEMAS
@@ -384,16 +387,11 @@ const generateWeekendAndHolidayDays = (
   return sorted;
 };
 
-const createEmptyRoster = (days?: string[]): WeekRoster => {
+const createEmptyRoster = (days?: string[], posts: string[] = defaultAdminSettings.rosterPosts): WeekRoster => {
   const r: WeekRoster = {};
   const daysList = days && days.length > 0 ? days : generateWeekendAndHolidayDays(initialHolidays);
   daysList.forEach(day => {
-    r[day] = {
-      'Cozinheiro de Dia': null,
-      'Copeiro de Dia': null,
-      'Ceia de Dia': null,
-      'Auxiliar do Copeiro de Dia': null
-    };
+    r[day] = Object.fromEntries(posts.map(post => [post, null]));
   });
   return r;
 };
@@ -546,6 +544,7 @@ export default function RosterApp() {
   // Notification Toast state
   const [toast, setToast] = useState<{ show: boolean; msg: string; type: 'success' | 'info' }>({ show: false, msg: '', type: 'success' });
   const [alertsOpen, setAlertsOpen] = useState(false);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
 
   // One versioned document keeps personnel, absences, assignments and professional history consistent.
   const saveState = (
@@ -635,13 +634,8 @@ export default function RosterApp() {
 
   const handleSaveAdminSettings = (settings: AdminSettings) => {
     const normalized = normalizeAdminSettings(settings);
-    const updatedRoster = clean(roster);
-    Object.keys(updatedRoster).forEach(day => {
-      normalized.rosterPosts.forEach(post => {
-        if (!(post in updatedRoster[day])) updatedRoster[day][post] = null;
-      });
-    });
-    const logsList = addLog('Configurações administrativas atualizadas. Postos históricos existentes foram preservados.');
+    const updatedRoster = reconcileRosterPosts(clean(roster), normalized.rosterPosts) as WeekRoster;
+    const logsList = addLog('Configurações administrativas atualizadas. Postos históricos preenchidos foram preservados e postos obsoletos vazios foram removidos.');
     const auditEvent = createAuditEvent({
       module: 'Configurações', action: 'ALTERACAO', entityType: 'Configurações administrativas', entityId: 'principal',
       summary: 'Parâmetros administrativos atualizados.',
@@ -649,6 +643,12 @@ export default function RosterApp() {
       newValue: `${normalized.rosterPosts.length} postos; ${normalized.absenceTypes.length} tipos de afastamento; ${normalized.specialties.length} especialidades`
     });
     if (!saveState(militaryList, absences, updatedRoster, logsList, customHolidays, { adminSettings: normalized, auditEvent })) return;
+    if (!normalized.absenceTypes.includes(absenceType)) setAbsenceType(normalized.absenceTypes[0]);
+    if (!normalized.ranks.includes(newMilRank)) setNewMilRank(normalized.ranks[0]);
+    if (!normalized.specialties.includes(newMilSpecialty)) setNewMilSpecialty(normalized.specialties[0]);
+    if (newMilSpecialtySecondary !== 'Nenhuma' && !normalized.specialties.includes(newMilSpecialtySecondary)) setNewMilSpecialtySecondary('Nenhuma');
+    if (filterFunction !== 'Todas as Funções' && !normalized.rosterPosts.includes(filterFunction)) setFilterFunction('Todas as Funções');
+    if (efetivoFunctionFilter !== 'Todas as Funções' && !normalized.specialties.includes(efetivoFunctionFilter)) setEfetivoFunctionFilter('Todas as Funções');
     showToast('Configurações administrativas salvas.');
   };
 
@@ -758,6 +758,18 @@ export default function RosterApp() {
     }
 
     let nextSwaps = swaps;
+    const activeSwapForCell = swaps.find(item =>
+      item.day === day && item.post === post && resolveSwapOperationalStatus(item) === 'ATIVA'
+    );
+    if (activeSwapForCell) {
+      const now = new Date().toISOString();
+      nextSwaps = swaps.map(item => item.id === activeSwapForCell.id ? {
+        ...item,
+        status: 'CANCELADA' as const,
+        cancelledAt: now,
+        note: item.note ? `${item.note} | Encerrada automaticamente por alteração posterior do posto.` : 'Encerrada automaticamente por alteração posterior do posto.'
+      } : item);
+    }
     let auditEvent: AuditEvent | undefined;
 
     if (prevCell && prevCell.militaryId) {
@@ -798,7 +810,7 @@ export default function RosterApp() {
             status: 'CONFIRMADA',
             createdAt: new Date().toISOString()
           };
-          nextSwaps = [swap, ...swaps];
+          nextSwaps = [swap, ...nextSwaps];
           logsList = addLog(`Permuta registrada em ${day} / ${post}: ${prevCell.rank}. ${prevCell.militaryName} por ${mil.rank}. ${mil.name}.`, logsList);
           auditEvent = createAuditEvent({
             module: 'Permutas', action: 'PERMUTA', entityType: 'Permuta', entityId: swap.id,
@@ -826,19 +838,29 @@ export default function RosterApp() {
   };
 
   const handleClearRoster = () => {
-    if (!window.confirm('Deseja realmente desmarcar todas as alocações da escala? Todos os postos ficarão vagos para alocação manual.')) {
+    const today = localIsoDate();
+    const targetDays = daysToShow.filter(day => ddmmyyyyToIso(day) >= today);
+    if (!targetDays.length) {
+      showToast('Não há datas atuais ou futuras visíveis para limpar. O histórico passado foi preservado.', 'info');
       return;
     }
-    const emptyRoster = Object.fromEntries(
-      Object.entries(roster).map(([day, posts]) => [
-        day,
-        Object.fromEntries(Object.keys(posts).map(post => [post, null]))
-      ])
-    ) as WeekRoster;
-    const resetMilList = militaryList.map(mil => ({ ...mil, dutyCount: 0 }));
-    const resetLogs = addLog('Todas as designações da escala foram desmarcadas para operação manual.', changelogs);
-    if (!saveState(resetMilList, absences, emptyRoster, resetLogs, customHolidays)) return;
-    showToast('Escala limpa com sucesso! Pronta para alocação manual.', 'success');
+    if (!window.confirm(`Desmarcar as designações de ${targetDays.length} data(s) atual(is)/futura(s) atualmente visíveis? Datas passadas e períodos fora do filtro serão preservados.`)) return;
+    const clearedRoster = clearRosterDays(roster, targetDays) as WeekRoster;
+    const targetSet = new Set(targetDays);
+    const now = new Date().toISOString();
+    const nextSwaps = swaps.map(item =>
+      targetSet.has(item.day) && resolveSwapOperationalStatus(item, today) === 'ATIVA'
+        ? { ...item, status: 'CANCELADA' as const, cancelledAt: now, note: item.note ? `${item.note} | Encerrada pela limpeza do período visível.` : 'Encerrada pela limpeza do período visível.' }
+        : item
+    );
+    const resetLogs = addLog(`Designações de ${targetDays.length} data(s) atual(is)/futura(s) visíveis foram desmarcadas; histórico anterior preservado.`, changelogs);
+    const auditEvent = createAuditEvent({
+      module: 'Escalas', action: 'ALTERACAO', entityType: 'Período da escala',
+      summary: `Limpeza manual aplicada a ${targetDays.length} data(s) visível(is), sem alterar datas passadas ou fora do filtro.`,
+      previousValue: 'Designações existentes no período selecionado', newValue: 'Postos vagos no período selecionado'
+    });
+    if (!saveState(militaryList, absences, clearedRoster, resetLogs, customHolidays, { swaps: nextSwaps, auditEvent })) return;
+    showToast('Período visível da escala limpo; histórico anterior preservado.', 'success');
   };
 
   // CRUD: Add new military personnel
@@ -881,8 +903,9 @@ export default function RosterApp() {
     const hasRosterHistory = Object.values(roster).some(day =>
       Object.values(day).some(cell => cell?.militaryId === id)
     );
-    if (hasAbsenceHistory || hasRosterHistory) {
-      showToast(`O cadastro de ${target.rank}. ${target.name} possui histórico de escala ou afastamento e não pode ser excluído. Edite o cadastro para preservar a rastreabilidade.`, 'info');
+    const hasSwapHistory = swaps.some(item => item.originalMilitaryId === id || item.replacementMilitaryId === id);
+    if (hasAbsenceHistory || hasRosterHistory || hasSwapHistory) {
+      showToast(`O cadastro de ${target.rank}. ${target.name} possui histórico de escala, afastamento ou permuta e não pode ser excluído. Edite o cadastro para preservar a rastreabilidade.`, 'info');
       return;
     }
     if (!window.confirm(`Tem certeza que deseja excluir o militar ${target.rank}. ${target.name}?`)) return;
@@ -930,11 +953,21 @@ export default function RosterApp() {
 
   // Reset is an explicit, recoverable cloud operation, never an automatic deletion.
   const handleResetDatabase = () => {
-    if (window.confirm('Redefinir militares, escalas, afastamentos e feriados para o modelo inicial? A alteração será sincronizada com os demais dispositivos.')) {
+    if (window.confirm('Redefinir militares, escalas, afastamentos e feriados para o modelo inicial? A alteração será sincronizada com os demais dispositivos. O histórico profissional será preservado.')) {
       if (!rosterCloud.controller.checkpoint()) return;
-      const freshRoster = createEmptyRoster();
-      if (!saveState(initialMilitary, initialAbsences, freshRoster, initialLogs, initialHolidays)) return;
-      showToast('Redefinição registrada.');
+      const freshRoster = createEmptyRoster(undefined, adminSettings.rosterPosts);
+      const now = new Date().toISOString();
+      const resetSwaps = swaps.map(item => resolveSwapOperationalStatus(item) === 'ATIVA'
+        ? { ...item, status: 'CANCELADA' as const, cancelledAt: now, note: item.note ? `${item.note} | Encerrada pela redefinição da base operacional.` : 'Encerrada pela redefinição da base operacional.' }
+        : item
+      );
+      const auditEvent = createAuditEvent({
+        module: 'Sistema', action: 'ALTERACAO', entityType: 'Base operacional', entityId: 'principal',
+        summary: 'Base operacional redefinida para o modelo inicial com cópia de recuperação.',
+        note: 'Histórico profissional e configurações administrativas preservados.'
+      });
+      if (!saveState(initialMilitary, initialAbsences, freshRoster, initialLogs, initialHolidays, { swaps: resetSwaps, auditEvent })) return;
+      showToast('Redefinição registrada com histórico profissional preservado.');
     }
   };
 
@@ -964,12 +997,11 @@ export default function RosterApp() {
     // Create empty slots for this holiday in the roster if not already present
     const updatedRoster = clean(roster);
     if (!updatedRoster[dayKey]) {
-      updatedRoster[dayKey] = {
-        'Cozinheiro de Dia': null,
-        'Copeiro de Dia': null,
-        'Ceia de Dia': null,
-        'Auxiliar do Copeiro de Dia': null
-      };
+      updatedRoster[dayKey] = Object.fromEntries(adminSettings.rosterPosts.map(post => [post, null]));
+    } else {
+      adminSettings.rosterPosts.forEach(post => {
+        if (!(post in updatedRoster[dayKey])) updatedRoster[dayKey][post] = null;
+      });
     }
     const updatedLogs = addLog(`Feriado cadastrado: ${dayKey} (${holidayItem.name}). Adicionado à escala operacional.`);
     if (!saveState(militaryList, absences, updatedRoster, updatedLogs, updatedHolidays)) return;
@@ -993,13 +1025,12 @@ export default function RosterApp() {
       const dateObj = new Date(y, m - 1, d);
       const isWeekend = dateObj.getDay() === 0 || dateObj.getDay() === 6;
 
-      const updatedRoster = clean(roster);
-      if (!isWeekend) {
-        delete updatedRoster[dayKey];
-      }
-      const updatedLogs = addLog(`Feriado ${dayKey} (${target.name}) removido da escala.`);
+      const removal = removeHolidayRosterDay(clean(roster), dayKey, isWeekend);
+      const updatedRoster = removal.roster as WeekRoster;
+      const retainedText = !isWeekend && removal.preserved ? ' A coluna da escala foi mantida porque possui histórico operacional.' : '';
+      const updatedLogs = addLog(`Feriado ${dayKey} (${target.name}) removido.${retainedText}`);
       if (!saveState(militaryList, absences, updatedRoster, updatedLogs, updatedHolidays)) return;
-      showToast(`Feriado ${dayKey} removido da escala.`);
+      showToast(`Feriado ${dayKey} removido.${retainedText}`, removal.preserved && !isWeekend ? 'info' : 'success');
     }
   };
 
@@ -1058,7 +1089,7 @@ export default function RosterApp() {
               }
               updatedRoster[day][post] = {
                 militaryId: mil.id,
-                militaryName: `${mil.rank} ${mil.name.toUpperCase()}`,
+                militaryName: mil.name.toUpperCase(),
                 rank: mil.rank,
                 type: 'DISP'
               };
@@ -1122,8 +1153,16 @@ export default function RosterApp() {
     const updatedMilList = clean(militaryList);
     const idx = updatedMilList.findIndex(m => m.id === milId);
     if (idx !== -1) {
+      const previous = updatedMilList[idx].specialty;
+      if (previous === spec) return;
       updatedMilList[idx].specialty = spec;
-      if (!saveState(updatedMilList, absences, roster, changelogs)) return;
+      const logsList = addLog(`Especialidade de ${updatedMilList[idx].rank}. ${updatedMilList[idx].name} alterada de ${previous} para ${spec}.`);
+      const auditEvent = createAuditEvent({
+        module: 'Efetivo', action: 'ALTERACAO', entityType: 'Especialidade', entityId: milId,
+        summary: `Especialidade de ${updatedMilList[idx].rank} ${updatedMilList[idx].name} atualizada.`,
+        previousValue: previous, newValue: spec
+      });
+      if (!saveState(updatedMilList, absences, roster, logsList, customHolidays, { auditEvent })) return;
       showToast(`Especialidade atualizada para ${updatedMilList[idx].rank}. ${updatedMilList[idx].name}`);
     }
   };
@@ -1142,7 +1181,7 @@ export default function RosterApp() {
   const totalMedicalAway = new Set(absences.filter(a =>
     resolveAbsenceStatus(a) === 'ATIVO' && (a.type.includes('LTS') || a.type.includes('Atestado'))
   ).map(a => a.militaryId)).size;
-  const pendingSwaps = swaps.filter(item => item.status === 'CONFIRMADA').length;
+  const pendingSwaps = swaps.filter(item => resolveSwapOperationalStatus(item) === 'ATIVA').length;
 
   const { rate: complianceRate } = rosterCompliance(roster);
 
@@ -1181,27 +1220,19 @@ export default function RosterApp() {
     ...adminSettings.specialties,
     ...militaryList.flatMap(item => [item.specialty, item.specialtySecondary || '']).filter(Boolean)
   ]));
+  const ranksForDisplay = Array.from(new Set([...adminSettings.ranks, ...militaryList.map(item => item.rank)]));
 
-  // Filter roster for display on Dashboard (Weekends & Custom Holidays)
-  const daysToShow = Object.keys(roster)
-    .sort((a, b) => ddmmyyyyToIso(a).localeCompare(ddmmyyyyToIso(b)))
-    .filter((day, index) => {
-      const details = getDayDetails(day, customHolidays);
-
-      // Scale type filter
-      if (filterScaleType === 'Fins de Semana' && !details.isWeekend) return false;
-      if (filterScaleType === 'Feriados' && !details.isHoliday) return false;
-
-      // View option filter
-      if (viewOption === '4 Finais de Semana' && index >= 8) return false;
-      if (viewOption === '8 Finais de Semana' && index >= 16) return false;
-      if (viewOption === 'Personalizado') {
-        const iso = details.iso;
-        if (iso < startDateFilter || iso > endDateFilter) return false;
-      }
-
-      return true;
-    });
+  // Filter roster for display on Dashboard (Weekends & Custom Holidays).
+  // The 4/8-weekend views are anchored to today, not to the oldest persisted date.
+  const daysToShow = selectRosterDays({
+    days: Object.keys(roster),
+    holidays: customHolidays,
+    filter: filterScaleType,
+    view: viewOption,
+    startIso: startDateFilter,
+    endIso: endDateFilter,
+    todayIso: localIsoDate(),
+  });
 
   return (
     <div className="flex h-screen w-full bg-[#050814] overflow-hidden text-slate-100 relative font-sans glass-container">
@@ -1310,7 +1341,7 @@ export default function RosterApp() {
 
         {/* Sidebar Footer */}
         <div className="px-4 py-4 border-t border-slate-900 space-y-1">
-          <button className="flex items-center gap-3 px-3 py-2 text-xs text-slate-400 hover:text-slate-200 transition-colors w-full rounded-lg hover:bg-slate-900/40">
+          <button onClick={() => setIsHelpOpen(true)} className="flex items-center gap-3 px-3 py-2 text-xs text-slate-400 hover:text-slate-200 transition-colors w-full rounded-lg hover:bg-slate-900/40">
             <HelpCircle className="w-4 h-4 text-emerald-500" />
             <span>Ajuda &amp; Informações</span>
           </button>
@@ -1449,7 +1480,7 @@ export default function RosterApp() {
                   <button 
                     onClick={handleClearRoster}
                     className="flex items-center gap-2 px-3.5 py-2 border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 rounded-lg font-semibold text-xs transition-all shadow-xs"
-                    title="Limpar todas as designações da escala para recomeçar alocação manual"
+                    title="Limpar somente as designações atuais/futuras do período visível; histórico passado é preservado"
                   >
                     <Eraser className="w-4 h-4 text-slate-500" />
                     <span>Limpar Escala</span>
@@ -1704,7 +1735,7 @@ export default function RosterApp() {
                                       cell.type === 'DISP' && "bg-slate-400/50 text-slate-600 line-through font-normal opacity-80",
                                       cell.type === 'PERM' && "bg-amber-500 text-amber-950"
                                     )}>
-                                      <span className="truncate">{cell.rank}. {cell.militaryName}</span>
+                                      <span className="truncate">{rosterCellDisplayName(cell)}</span>
                                       <span className="text-[9px] opacity-80 font-semibold tracking-wider">
                                         {cell.type === 'DISP' ? '(LTS)' : `(${cell.type})`}
                                       </span>
@@ -1863,15 +1894,8 @@ export default function RosterApp() {
                         </div>
 
                         <div className="pt-3 border-t border-white/15">
-                          <p className="text-[10px] font-bold text-emerald-200 uppercase mb-2">Funções Disponíveis</p>
-                          <div className="flex justify-between text-xs mb-1">
-                            <span className="text-emerald-100">Cozinha / Ceia</span>
-                            <span className="font-semibold text-white">Cozinheiro & Ceia de Dia</span>
-                          </div>
-                          <div className="flex justify-between text-xs">
-                            <span className="text-emerald-100">Copa / Apoio</span>
-                            <span className="font-semibold text-white">Copeiro & Auxiliar</span>
-                          </div>
+                          <p className="text-[10px] font-bold text-emerald-200 uppercase mb-2">Postos Configurados</p>
+                          <p className="text-xs font-semibold text-white leading-relaxed">{adminSettings.rosterPosts.join(' • ')}</p>
                         </div>
                       </div>
                     </div>
@@ -2613,6 +2637,28 @@ export default function RosterApp() {
         </div>
 
       </main>
+
+      {isHelpOpen && (
+        <div className="fixed inset-0 bg-slate-950/50 backdrop-blur-xs z-50 flex items-center justify-center p-4" onClick={() => setIsHelpOpen(false)}>
+          <div className="bg-white text-slate-800 rounded-2xl shadow-2xl border border-slate-200 max-w-2xl w-full overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+              <div>
+                <h4 className="font-bold text-slate-900">Ajuda & Informações</h4>
+                <p className="text-xs text-slate-500 mt-0.5">Guia rápido da operação do Gestão de Aprov.</p>
+              </div>
+              <button onClick={() => setIsHelpOpen(false)} className="p-2 rounded-lg hover:bg-slate-200 text-slate-500" aria-label="Fechar ajuda"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="p-6 grid md:grid-cols-2 gap-4 text-xs leading-relaxed">
+              <div className="rounded-xl border border-slate-200 p-4"><strong className="text-slate-900">Central Operacional</strong><p className="text-slate-600 mt-1">Concentra alertas, calendário, afastamentos, postos vagos, cardápio e retiradas de carnes.</p></div>
+              <div className="rounded-xl border border-slate-200 p-4"><strong className="text-slate-900">Escalas</strong><p className="text-slate-600 mt-1">A designação é manual. Afastamentos cadastrados são o único bloqueio automático de seleção por data.</p></div>
+              <div className="rounded-xl border border-slate-200 p-4"><strong className="text-slate-900">Cardápio e Saque</strong><p className="text-slate-600 mt-1">Use a prontidão antes de avançar o fluxo. Cardápios arquivados ficam somente para consulta até restauração.</p></div>
+              <div className="rounded-xl border border-slate-200 p-4"><strong className="text-slate-900">Fluxos Profissionais</strong><p className="text-slate-600 mt-1">Consulte histórico, permutas, versões, arquivamento e configurações administrativas.</p></div>
+              <div className="md:col-span-2 rounded-xl border border-amber-200 bg-amber-50 p-4 text-amber-900"><strong>Sincronização:</strong> quando houver alteração pendente, aguarde a confirmação do servidor antes de tratar relatórios ou PDFs como documentos oficiais.</div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {isAssigning && selectedCell && (
         <div className="fixed inset-0 bg-slate-950/40 backdrop-blur-xs z-50 flex items-center justify-center p-4">
           <motion.div 
@@ -2640,7 +2686,7 @@ export default function RosterApp() {
                   <div>
                     <span className="text-[10px] font-bold text-emerald-800 uppercase tracking-wider block">Escalado Atualmente</span>
                     <p className="text-xs font-bold text-emerald-950">
-                      {roster[selectedCell.day][selectedCell.post]?.rank}. {roster[selectedCell.day][selectedCell.post]?.militaryName}
+                      {roster[selectedCell.day][selectedCell.post] ? rosterCellDisplayName(roster[selectedCell.day][selectedCell.post]!) : ''}
                     </p>
                   </div>
                   <button
@@ -2788,10 +2834,7 @@ export default function RosterApp() {
                     onChange={e => setEditingMil({ ...editingMil, rank: e.target.value })}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-medium focus:ring-2 focus:ring-slate-900 outline-hidden bg-white"
                   >
-                    <option value="Ten">Tenente (Ten)</option>
-                    <option value="Sgt">Sargento (Sgt)</option>
-                    <option value="Cb">Cabo (Cb)</option>
-                    <option value="Sd">Soldado (Sd)</option>
+                    {ranksForDisplay.map(item => <option key={item} value={item}>{item}</option>)}
                   </select>
                 </div>
 
@@ -2837,10 +2880,7 @@ export default function RosterApp() {
                     onChange={e => setEditingMil({ ...editingMil, specialty: e.target.value })}
                     className="w-full px-2.5 py-2 border border-slate-200 rounded-lg text-xs font-medium focus:ring-2 focus:ring-slate-900 outline-hidden bg-white"
                   >
-                    <option value="Cozinheiro de Dia">Cozinheiro de Dia</option>
-                    <option value="Copeiro de Dia">Copeiro de Dia</option>
-                    <option value="Auxiliar do Copeiro de Dia">Auxiliar do Copeiro de Dia</option>
-                    <option value="Ceia de Dia">Ceia de Dia</option>
+                    {specialtiesForDisplay.map(item => <option key={item} value={item}>{item}</option>)}
                   </select>
                 </div>
 
@@ -2852,10 +2892,7 @@ export default function RosterApp() {
                     className="w-full px-2.5 py-2 border border-slate-200 rounded-lg text-xs font-medium focus:ring-2 focus:ring-slate-900 outline-hidden bg-white"
                   >
                     <option value="Nenhuma">Nenhuma</option>
-                    <option value="Cozinheiro de Dia">Cozinheiro de Dia</option>
-                    <option value="Copeiro de Dia">Copeiro de Dia</option>
-                    <option value="Auxiliar do Copeiro de Dia">Auxiliar do Copeiro de Dia</option>
-                    <option value="Ceia de Dia">Ceia de Dia</option>
+                    {specialtiesForDisplay.map(item => <option key={item} value={item}>{item}</option>)}
                   </select>
                 </div>
               </div>

@@ -18,6 +18,7 @@ import { cn } from '@/lib/utils';
 import type { WeeklyCardapioDoc, WorkflowStatus } from '@/components/CardapioSemanal';
 import {
   normalizeAdminSettings,
+  resolveSwapOperationalStatus,
   splitLines,
   type AdminSettings,
   type AuditEvent,
@@ -119,7 +120,7 @@ export default function ProfessionalFlows({
   const professionalCardapios = cardapios as ProfessionalCardapio[];
   const archivedCount = professionalCardapios.filter(item => !!item.archivedAt).length;
   const versionCount = professionalCardapios.reduce((sum, item) => sum + (item.versions?.length || 0), 0);
-  const activeSwaps = swaps.filter(item => item.status === 'CONFIRMADA').length;
+  const activeSwaps = swaps.filter(item => resolveSwapOperationalStatus(item) === 'ATIVA').length;
 
   const tabs: Array<{ id: Section; label: string; icon: React.ComponentType<{ className?: string }>; badge?: number }> = [
     { id: 'historico', label: 'Histórico e Auditoria', icon: History, badge: auditTrail.length },
@@ -204,7 +205,10 @@ export default function ProfessionalFlows({
           <div className="p-4 border-b border-slate-100"><h4 className="font-bold text-slate-900">Registro estruturado de permutas</h4><p className="text-xs text-slate-500 mt-0.5">A permuta preserva militar original, substituto, data, posto, situação e histórico.</p></div>
           <div className="overflow-x-auto">
             <table className="w-full text-xs"><thead className="bg-slate-50 text-slate-500"><tr><th className="p-3 text-left">Data / Posto</th><th className="p-3 text-left">Original</th><th className="p-3 text-left">Substituto</th><th className="p-3 text-left">Registro</th><th className="p-3 text-left">Status</th><th className="p-3 text-right">Ação</th></tr></thead>
-              <tbody className="divide-y divide-slate-100">{swaps.length === 0 ? <tr><td colSpan={6} className="p-10 text-center text-slate-500">Nenhuma permuta estruturada registrada.</td></tr> : swaps.map(item => <tr key={item.id}><td className="p-3"><div className="font-bold text-slate-800">{item.day}</div><div className="text-slate-500">{item.post}</div></td><td className="p-3">{item.originalRank} {item.originalMilitaryName}</td><td className="p-3 font-semibold">{item.replacementRank} {item.replacementMilitaryName}</td><td className="p-3 text-slate-500">{formatDateTime(item.createdAt)}</td><td className="p-3"><span className={cn('px-2 py-1 rounded-full font-bold text-[10px]', item.status === 'CONFIRMADA' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600')}>{item.status}</span>{item.note && <div className="text-[10px] text-slate-500 mt-1 max-w-56">{item.note}</div>}</td><td className="p-3 text-right">{item.status === 'CONFIRMADA' && <button onClick={() => { const note = window.prompt('Motivo/observação do cancelamento da permuta:') || ''; if (window.confirm('Cancelar esta permuta? O sistema tentará restaurar o militar original se o posto ainda estiver com o substituto.')) onCancelSwap(item.id, note); }} className="inline-flex items-center gap-1 px-2.5 py-1.5 border border-rose-200 text-rose-700 rounded-lg hover:bg-rose-50"><XCircle className="w-3.5 h-3.5" />Cancelar</button>}</td></tr>)}</tbody>
+              <tbody className="divide-y divide-slate-100">{swaps.length === 0 ? <tr><td colSpan={6} className="p-10 text-center text-slate-500">Nenhuma permuta estruturada registrada.</td></tr> : swaps.map(item => {
+                const operationalStatus = resolveSwapOperationalStatus(item);
+                return <tr key={item.id}><td className="p-3"><div className="font-bold text-slate-800">{item.day}</div><div className="text-slate-500">{item.post}</div></td><td className="p-3">{item.originalRank} {item.originalMilitaryName}</td><td className="p-3 font-semibold">{item.replacementRank} {item.replacementMilitaryName}</td><td className="p-3 text-slate-500">{formatDateTime(item.createdAt)}</td><td className="p-3"><span className={cn('px-2 py-1 rounded-full font-bold text-[10px]', operationalStatus === 'ATIVA' ? 'bg-emerald-100 text-emerald-800' : operationalStatus === 'CONCLUIDA' ? 'bg-blue-100 text-blue-800' : 'bg-slate-100 text-slate-600')}>{operationalStatus === 'ATIVA' ? 'ATIVA' : operationalStatus === 'CONCLUIDA' ? 'CONCLUÍDA' : 'CANCELADA'}</span>{item.note && <div className="text-[10px] text-slate-500 mt-1 max-w-56">{item.note}</div>}</td><td className="p-3 text-right">{operationalStatus === 'ATIVA' && <button onClick={() => { const note = window.prompt('Motivo/observação do cancelamento da permuta:') || ''; if (window.confirm('Cancelar esta permuta? O sistema tentará restaurar o militar original se o posto ainda estiver com o substituto.')) onCancelSwap(item.id, note); }} className="inline-flex items-center gap-1 px-2.5 py-1.5 border border-rose-200 text-rose-700 rounded-lg hover:bg-rose-50"><XCircle className="w-3.5 h-3.5" />Cancelar</button>}</td></tr>;
+              })}</tbody>
             </table>
           </div>
         </section>

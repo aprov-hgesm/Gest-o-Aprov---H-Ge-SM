@@ -5,6 +5,7 @@ import {
   defaultAdminSettings,
   inferAuditFromLog,
   normalizeAdminSettings,
+  resolveSwapOperationalStatus,
   trimAuditTrail,
 } from '../lib/domain/professional-flows.ts';
 
@@ -40,4 +41,11 @@ test('limite de retenção do histórico é respeitado', () => {
     summary: `Evento ${index}`,
   }));
   assert.equal(trimAuditTrail(events, settings).length, 100);
+});
+
+
+test('permuta passada não permanece ativa na visão operacional', () => {
+  assert.equal(resolveSwapOperationalStatus({ day: '15/09/2026', status: 'CONFIRMADA' }, '2026-09-16'), 'CONCLUIDA');
+  assert.equal(resolveSwapOperationalStatus({ day: '16/09/2026', status: 'CONFIRMADA' }, '2026-09-16'), 'ATIVA');
+  assert.equal(resolveSwapOperationalStatus({ day: '20/09/2026', status: 'CANCELADA' }, '2026-09-16'), 'CANCELADA');
 });
