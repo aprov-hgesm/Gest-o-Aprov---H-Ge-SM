@@ -101,7 +101,9 @@ try {
   );
   await page.getByText('Download do PDF (A4 Paisagem) concluído com sucesso!', { exact: true }).waitFor({ timeout: 15000 });
 
-  await page.getByRole('button', { name: /Saque de Carnes/ }).first().click();
+  // O Bloco 5 adiciona um módulo principal com o mesmo nome. Aqui o smoke continua
+  // validando explicitamente o mapa oficial legado existente dentro do Cardápio.
+  await page.getByTitle('Gerar e Visualizar o Mapa Semanal de Saque de Carnes com cálculo de descongelamento').click();
   await page.getByRole('heading', { name: 'Mapa de Saque de Carnes da Câmara Fria' }).waitFor();
   const saque = await clickAndDownload(
     page.getByTitle('Baixar Mapa de Saque em PDF A4'),
