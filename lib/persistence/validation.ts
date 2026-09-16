@@ -13,7 +13,8 @@ const military = (value: unknown) => object(value) &&
 const absence = (value: unknown) => object(value) &&
   strings(value, ['id', 'militaryId', 'militaryName', 'rank', 'type', 'startDate', 'endDate', 'notes']) &&
   typeof value.indefinite === 'boolean' && typeof value.autoUpdate === 'boolean' &&
-  ['ATIVO', 'AGENDADO'].includes(String(value.status));
+  ['ATIVO', 'AGENDADO', 'ENCERRADO', 'CANCELADO'].includes(String(value.status)) &&
+  optional(value, 'actualEndDate', 'string') && optional(value, 'closedAt', 'string');
 const cell = (value: unknown) => value === null || (object(value) &&
   strings(value, ['militaryId', 'militaryName', 'rank']) &&
   ['EP', 'EV', 'PERM', 'DISP'].includes(String(value.type)));

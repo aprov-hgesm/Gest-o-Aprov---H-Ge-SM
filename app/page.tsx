@@ -33,6 +33,11 @@ import SyncStatus from '@/components/SyncStatus';
 import { useCloudData } from '@/hooks/use-cloud-data';
 import { clean, equal } from '@/lib/persistence/core';
 import { validateRoster } from '@/lib/persistence/validation';
+import { signOutUser } from '@/lib/firebase';
+import {
+  isMilitaryAbsentOnDate, localIsoDate, normalizeMilitaryStatuses,
+  recalculateDutyCounts, resolveAbsenceStatus, rosterCompliance
+} from '@/lib/domain/roster-integrity';
 
 // ==========================================
 // TYPES & SCHEMAS
@@ -61,7 +66,9 @@ interface Absence {
   indefinite: boolean;
   notes: string;
   autoUpdate: boolean;
-  status: 'ATIVO' | 'AGENDADO';
+  status: 'ATIVO' | 'AGENDADO' | 'ENCERRADO' | 'CANCELADO';
+  actualEndDate?: string;
+  closedAt?: string;
 }
 
 interface RosterCell {
@@ -323,11 +330,17 @@ const getDayDetails = (dayKey: string, customHolidays: HolidayDate[] = []) => {
 
 const generateWeekendAndHolidayDays = (
   customHolidays: HolidayDate[] = initialHolidays,
-  startMonthIso: string = '2026-09-01',
-  endMonthIso: string = '2026-12-31'
+  startMonthIso?: string,
+  endMonthIso?: string
 ): string[] => {
-  const [sy, sm, sd] = startMonthIso.split('-').map(Number);
-  const [ey, em, ed] = endMonthIso.split('-').map(Number);
+  const now = new Date();
+  const defaultStart = `${localIsoDate(now).slice(0, 8)}01`;
+  const future = new Date(now.getFullYear(), now.getMonth() + 6, 0);
+  const defaultEnd = localIsoDate(future);
+  const rangeStart = startMonthIso || defaultStart;
+  const rangeEnd = endMonthIso || defaultEnd;
+  const [sy, sm, sd] = rangeStart.split('-').map(Number);
+  const [ey, em, ed] = rangeEnd.split('-').map(Number);
   const curr = new Date(sy, (sm || 1) - 1, sd || 1);
   const end = new Date(ey, (em || 1) - 1, ed || 1);
 
@@ -352,7 +365,7 @@ const generateWeekendAndHolidayDays = (
 
   // Also include any holidays explicitly registered
   customHolidays.forEach(h => {
-    if (h.date) {
+    if (h.date && h.date >= rangeStart && h.date <= rangeEnd) {
       daysSet.add(isoToDdmmyyyy(h.date));
     }
   });
@@ -432,8 +445,9 @@ export default function RosterApp() {
   // ==========================================
   // STATE MANAGEMENT
   // ==========================================
-  const { militaryList, absences, roster, changelogs, customHolidays } =
-    rosterCloud.state.records[0] ?? initialRosterDocuments[0];
+  const rosterDocument = rosterCloud.state.records[0] ?? initialRosterDocuments[0];
+  const { absences, roster, changelogs, customHolidays } = rosterDocument;
+  const militaryList = normalizeMilitaryStatuses(rosterDocument.militaryList, absences);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'efetivo' | 'afastamentos' | 'cardapio'>('dashboard');
   
   // Sidebar state for mobile
@@ -452,12 +466,19 @@ export default function RosterApp() {
   // TAB 1: GESTÃO DE ESCALAS (Independent State)
   // ----------------------------------------------------
   const [isHolidayModalOpen, setIsHolidayModalOpen] = useState(false);
-  const [newHolidayDate, setNewHolidayDate] = useState('2026-09-18');
+  const [newHolidayDate, setNewHolidayDate] = useState(() => localIsoDate());
   const [newHolidayName, setNewHolidayName] = useState('');
 
   const [viewOption, setViewOption] = useState<'4 Finais de Semana' | '8 Finais de Semana' | 'Todos' | 'Personalizado'>('Todos');
-  const [startDateFilter, setStartDateFilter] = useState('2026-09-01');
-  const [endDateFilter, setEndDateFilter] = useState('2026-11-30');
+  const [startDateFilter, setStartDateFilter] = useState(() => {
+    const today = localIsoDate();
+    return `${today.slice(0, 8)}01`;
+  });
+  const [endDateFilter, setEndDateFilter] = useState(() => {
+    const date = new Date();
+    date.setMonth(date.getMonth() + 3);
+    return localIsoDate(date);
+  });
   const [filterMilitaryName, setFilterMilitaryName] = useState('');
   const [filterFunction, setFilterFunction] = useState('Todas as Funções');
   const [filterScaleType, setFilterScaleType] = useState<'Todos' | 'Fins de Semana' | 'Feriados'>('Todos');
@@ -497,8 +518,6 @@ export default function RosterApp() {
   const [newMilSpecialty, setNewMilSpecialty] = useState('Cozinheiro de Dia');
   const [newMilSpecialtySecondary, setNewMilSpecialtySecondary] = useState('Nenhuma');
   const [newMilScaleType, setNewMilScaleType] = useState<'EP' | 'EV' | 'Ambas'>('Ambas');
-  const [newMilStatus, setNewMilStatus] = useState<'Ativo' | 'Afastado'>('Ativo');
-  const [newMilDutyCount, setNewMilDutyCount] = useState(0);
 
   // Notification Toast state
   const [toast, setToast] = useState<{ show: boolean; msg: string; type: 'success' | 'info' }>({ show: false, msg: '', type: 'success' });
@@ -511,8 +530,16 @@ export default function RosterApp() {
     newLogs: LogEntry[],
     newHolidays: HolidayDate[] = customHolidays
   ) => {
+    const normalizedAbsences = newAbs.map(absence => ({
+      ...absence,
+      status: resolveAbsenceStatus(absence)
+    }));
+    const normalizedMilitary = recalculateDutyCounts(
+      normalizeMilitaryStatuses(newMil, normalizedAbsences),
+      newRos
+    );
     return rosterCloud.controller.update([{
-      id: 'principal', militaryList: newMil, absences: newAbs,
+      id: 'principal', militaryList: normalizedMilitary, absences: normalizedAbsences,
       roster: newRos, changelogs: newLogs, customHolidays: newHolidays
     }]);
   };
@@ -539,15 +566,8 @@ export default function RosterApp() {
   // ==========================================
 
   // Helper: Check if a military has an active or scheduled absence covering a given day
-  const isMilitaryAbsentOnDay = (militaryId: string, dayStr: string, activeAbsences: Absence[] = absences): boolean => {
-    const dayISO = ddmmyyyyToIso(dayStr);
-    return activeAbsences.some(a => {
-      if (a.militaryId !== militaryId) return false;
-      if (a.status !== 'ATIVO' && a.status !== 'AGENDADO') return false;
-      if (a.indefinite) return dayISO >= a.startDate;
-      return dayISO >= a.startDate && dayISO <= a.endDate;
-    });
-  };
+  const isMilitaryAbsentOnDay = (militaryId: string, dayStr: string, activeAbsences: Absence[] = absences): boolean =>
+    isMilitaryAbsentOnDate(activeAbsences, militaryId, ddmmyyyyToIso(dayStr));
 
   // ==========================================
   // OPERAÇÃO MANUAL DA ESCALA
@@ -620,7 +640,12 @@ export default function RosterApp() {
     if (!window.confirm('Deseja realmente desmarcar todas as alocações da escala? Todos os postos ficarão vagos para alocação manual.')) {
       return;
     }
-    const emptyRoster = createEmptyRoster(daysToShow);
+    const emptyRoster = Object.fromEntries(
+      Object.entries(roster).map(([day, posts]) => [
+        day,
+        Object.fromEntries(Object.keys(posts).map(post => [post, null]))
+      ])
+    ) as WeekRoster;
     const resetMilList = militaryList.map(mil => ({ ...mil, dutyCount: 0 }));
     const resetLogs = addLog('Todas as designações da escala foram desmarcadas para operação manual.', changelogs);
     if (!saveState(resetMilList, absences, emptyRoster, resetLogs, customHolidays)) return;
@@ -643,9 +668,9 @@ export default function RosterApp() {
       matricula: newMilMatricula,
       specialty: newMilSpecialty,
       specialtySecondary: newMilSpecialtySecondary === 'Nenhuma' ? undefined : newMilSpecialtySecondary,
-      status: newMilStatus,
+      status: 'Ativo',
       type: newMilScaleType,
-      dutyCount: newMilDutyCount
+      dutyCount: 0
     };
 
     const updated = [...militaryList, newMil];
@@ -659,30 +684,23 @@ export default function RosterApp() {
     showToast(`${newMilRank}. ${newMilName} cadastrado com sucesso!`);
   };
 
-  // CRUD: Delete military personnel and clean up rosters
+  // Excluir somente cadastros sem histórico operacional; vínculos históricos devem ser preservados.
   const handleDeleteMilitary = (id: string) => {
     const target = militaryList.find(m => m.id === id);
     if (!target) return;
-
-    if (window.confirm(`Tem certeza que deseja excluir o militar ${target.rank}. ${target.name}?`)) {
-      const updatedMil = militaryList.filter(m => m.id !== id);
-      const updatedAbs = absences.filter(a => a.militaryId !== id);
-
-      // Clean slots in roster
-      const updatedRoster = clean(roster);
-      Object.keys(updatedRoster).forEach(day => {
-        Object.keys(updatedRoster[day]).forEach(post => {
-          const cell = updatedRoster[day][post];
-          if (cell && cell.militaryId === id) {
-            updatedRoster[day][post] = null;
-          }
-        });
-      });
-
-      let logsList = addLog(`Militar excluído do sistema: ${target.rank}. ${target.name}.`);
-      if (!saveState(updatedMil, updatedAbs, updatedRoster, logsList)) return;
-      showToast(`Militar ${target.name} removido com sucesso.`);
+    const hasAbsenceHistory = absences.some(a => a.militaryId === id);
+    const hasRosterHistory = Object.values(roster).some(day =>
+      Object.values(day).some(cell => cell?.militaryId === id)
+    );
+    if (hasAbsenceHistory || hasRosterHistory) {
+      showToast(`O cadastro de ${target.rank}. ${target.name} possui histórico de escala ou afastamento e não pode ser excluído. Edite o cadastro para preservar a rastreabilidade.`, 'info');
+      return;
     }
+    if (!window.confirm(`Tem certeza que deseja excluir o militar ${target.rank}. ${target.name}?`)) return;
+    const updatedMil = militaryList.filter(m => m.id !== id);
+    const logsList = addLog(`Cadastro sem histórico excluído: ${target.rank}. ${target.name}.`);
+    if (!saveState(updatedMil, absences, roster, logsList)) return;
+    showToast(`Militar ${target.name} removido com sucesso.`);
   };
 
   // CRUD: Save edit of military personnel and synchronize with roster and absences
@@ -808,28 +826,30 @@ export default function RosterApp() {
     const mil = militaryList.find(m => m.id === absentMilId);
     if (!mil) return;
 
+    const today = localIsoDate();
+    const startDate = absenceStart || today;
+    const plannedEndDate = absenceEnd || today;
+    if (!absenceIndefinite && plannedEndDate < startDate) {
+      showToast('A data final do afastamento não pode ser anterior à data inicial.', 'info');
+      return;
+    }
     const newAbsence: Absence = {
       id: `afast-${Date.now()}`,
       militaryId: mil.id,
       militaryName: mil.name,
       rank: mil.rank,
       type: absenceType,
-      startDate: absenceStart || new Date().toISOString().split('T')[0],
-      endDate: absenceIndefinite ? 'Indefinido' : absenceEnd || new Date().toISOString().split('T')[0],
+      startDate,
+      endDate: absenceIndefinite ? 'Indefinido' : plannedEndDate,
       indefinite: absenceIndefinite,
       notes: absenceNotes,
       autoUpdate: absenceAutoUpdate,
-      status: 'ATIVO'
+      status: startDate > today ? 'AGENDADO' : 'ATIVO'
     };
 
     const updatedAbsences = [newAbsence, ...absences];
-    const updatedMilList = clean(militaryList);
-
-    // Mark military as Afastado
+    const updatedMilList = normalizeMilitaryStatuses(clean(militaryList), updatedAbsences, today);
     const milIdx = updatedMilList.findIndex(m => m.id === mil.id);
-    if (milIdx !== -1) {
-      updatedMilList[milIdx].status = 'Afastado';
-    }
 
     // Auto update roster if checked: replace their active slots with "Dispensa"
     const updatedRoster = clean(roster);
@@ -868,35 +888,44 @@ export default function RosterApp() {
     showToast(`Afastamento de ${mil.name} registrado com sucesso!`);
   };
 
-  // Terminate a leave early
+  // Encerrar/cancelar sem apagar o histórico do afastamento
   const handleEndAbsence = (id: string) => {
     const abs = absences.find(a => a.id === id);
     if (!abs) return;
+    const today = localIsoDate();
+    const effectiveStatus = resolveAbsenceStatus(abs, today);
+    if (effectiveStatus === 'ENCERRADO' || effectiveStatus === 'CANCELADO') return;
+    const nextStatus: Absence['status'] = effectiveStatus === 'AGENDADO' ? 'CANCELADO' : 'ENCERRADO';
+    const updatedAbsences = absences.map(item => item.id === id ? {
+      ...item,
+      status: nextStatus,
+      actualEndDate: nextStatus === 'ENCERRADO' ? today : item.actualEndDate,
+      closedAt: new Date().toISOString()
+    } : item);
+    const updatedMilList = normalizeMilitaryStatuses(clean(militaryList), updatedAbsences, today);
 
-    const updatedAbsences = absences.filter(a => a.id !== id);
-    const updatedMilList = clean(militaryList);
-
-    // Set military back to Ativo only if no other active absences remain
-    const hasOtherAbsences = updatedAbsences.some(a => a.militaryId === abs.militaryId);
-    const milIdx = updatedMilList.findIndex(m => m.id === abs.militaryId);
-    if (milIdx !== -1 && !hasOtherAbsences) {
-      updatedMilList[milIdx].status = 'Ativo';
-    }
-
-    // Clean dispensa entries in roster
     const updatedRoster = clean(roster);
     Object.keys(updatedRoster).forEach(day => {
+      const dayISO = ddmmyyyyToIso(day);
+      const wasCoveredByThisAbsence = dayISO >= abs.startDate && (abs.indefinite || dayISO <= abs.endDate);
+      const coveredByAnotherAbsence = isMilitaryAbsentOnDate(
+        updatedAbsences.filter(item => item.id !== id),
+        abs.militaryId,
+        dayISO
+      );
       Object.keys(updatedRoster[day]).forEach(post => {
         const cell = updatedRoster[day][post];
-        if (cell && cell.militaryId === abs.militaryId && cell.type === 'DISP') {
-          updatedRoster[day][post] = null;
-        }
+        if (
+          cell && cell.militaryId === abs.militaryId && cell.type === 'DISP' &&
+          dayISO >= today && wasCoveredByThisAbsence && !coveredByAnotherAbsence
+        ) updatedRoster[day][post] = null;
       });
     });
 
-    let logsList = addLog(`Retorno de afastamento homologado para ${abs.rank}. ${abs.militaryName}.`);
+    const action = nextStatus === 'CANCELADO' ? 'Afastamento agendado cancelado' : 'Retorno de afastamento homologado';
+    const logsList = addLog(`${action} para ${abs.rank}. ${abs.militaryName}.`);
     if (!saveState(updatedMilList, updatedAbsences, updatedRoster, logsList)) return;
-    showToast(`Militar ${abs.militaryName} retornou ao serviço ativo.`);
+    showToast(nextStatus === 'CANCELADO' ? `Afastamento de ${abs.militaryName} cancelado.` : `Militar ${abs.militaryName} retornou ao serviço ativo.`);
   };
 
   // Toggle military specialties
@@ -921,17 +950,14 @@ export default function RosterApp() {
       return acc;
     }, new Set<string>()).size;
 
-  const totalMedicalAway = absences.filter(a => a.type.includes('LTS') || a.type.includes('Atestado')).length;
+  const totalMedicalAway = new Set(absences.filter(a =>
+    resolveAbsenceStatus(a) === 'ATIVO' && (a.type.includes('LTS') || a.type.includes('Atestado'))
+  ).map(a => a.militaryId)).size;
   const pendingSwaps = Object.values(roster)
     .flatMap(dayObj => Object.values(dayObj))
     .filter(cell => cell && cell.type === 'PERM').length;
 
-  const totalPossibleSlots = Object.values(roster)
-    .flatMap(dayObj => Object.keys(dayObj)).length;
-  const filledSlots = Object.values(roster)
-    .flatMap(dayObj => Object.values(dayObj))
-    .filter(cell => cell !== null).length;
-  const complianceRate = totalPossibleSlots > 0 ? Math.round((filledSlots / totalPossibleSlots) * 100) : 100;
+  const { rate: complianceRate } = rosterCompliance(roster);
 
   // Filter roster for display on Dashboard (Weekends & Custom Holidays)
   const daysToShow = Object.keys(roster)
@@ -1043,7 +1069,7 @@ export default function RosterApp() {
             <HelpCircle className="w-4 h-4 text-emerald-500" />
             <span>Ajuda &amp; Informações</span>
           </button>
-          <button className="flex items-center gap-3 px-3 py-2 text-xs text-slate-400 hover:text-slate-200 transition-colors w-full rounded-lg hover:bg-slate-900/40">
+          <button onClick={() => void signOutUser()} className="flex items-center gap-3 px-3 py-2 text-xs text-slate-400 hover:text-slate-200 transition-colors w-full rounded-lg hover:bg-slate-900/40">
             <LogOut className="w-4 h-4 text-rose-500" />
             <span>Sair</span>
           </button>
@@ -1076,7 +1102,7 @@ export default function RosterApp() {
 
           <div className="flex items-center gap-4">
             {/* Context-aware Search bar */}
-            <div className="relative max-w-xs hidden md:block">
+            {activeTab !== 'cardapio' && <div className="relative max-w-xs hidden md:block">
               <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <input 
                 type="text" 
@@ -1102,7 +1128,7 @@ export default function RosterApp() {
                 }}
                 className="w-64 pl-9 pr-4 py-1.5 bg-slate-100 rounded-full border-none focus:ring-1 focus:ring-emerald-800 text-xs text-slate-700"
               />
-            </div>
+            </div>}
 
             <button className="p-2 text-slate-400 hover:bg-slate-100 rounded-full relative transition-colors">
               <Bell className="w-5 h-5" />
@@ -1675,7 +1701,7 @@ export default function RosterApp() {
                                 "text-[10px] font-bold px-1.5 py-0.2 rounded uppercase shrink-0",
                                 mil.status === 'Ativo' ? "bg-slate-100 text-slate-600" : "bg-rose-50 text-rose-600"
                               )}>
-                                {mil.status === 'Ativo' ? 'Disponível' : 'LTS'}
+                                {mil.status === 'Ativo' ? 'Disponível' : 'Afastado'}
                               </span>
                             </div>
                           </div>
@@ -1698,7 +1724,7 @@ export default function RosterApp() {
                 <div className="bg-white border border-slate-200 p-5 rounded-xl shadow-xs flex items-center justify-between">
                   <div>
                     <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">Militares Afastados Hoje</span>
-                    <h3 className="text-3xl font-black text-slate-800">{absences.filter(a => a.status === 'ATIVO').length}</h3>
+                    <h3 className="text-3xl font-black text-slate-800">{new Set(absences.filter(a => resolveAbsenceStatus(a) === 'ATIVO').map(a => a.militaryId)).size}</h3>
                     <p className="text-xs text-rose-500 font-medium mt-1 flex items-center gap-1">
                       <ShieldAlert className="w-3.5 h-3.5" />
                       <span>Requer atenção na escala</span>
@@ -1713,11 +1739,17 @@ export default function RosterApp() {
                   <div>
                     <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">Retornos Previstos (7 dias)</span>
                     <h3 className="text-3xl font-black text-slate-800">
-                      {String(absences.filter(a => {
-                        if (a.indefinite || !a.endDate || a.endDate === 'Indefinido') return false;
-                        const endDay = getDayNumberFromISO(a.endDate);
-                        return endDay >= 1 && endDay <= 7;
-                      }).length).padStart(2, '0')}
+                      {(() => {
+                        const today = localIsoDate();
+                        const horizonDate = new Date();
+                        horizonDate.setDate(horizonDate.getDate() + 7);
+                        const horizon = localIsoDate(horizonDate);
+                        const returning = new Set(absences.filter(a => {
+                          if (resolveAbsenceStatus(a) !== 'ATIVO' || a.indefinite || !a.endDate || a.endDate === 'Indefinido') return false;
+                          return a.endDate >= today && a.endDate <= horizon;
+                        }).map(a => a.militaryId));
+                        return String(returning.size).padStart(2, '0');
+                      })()}
                     </h3>
                     <p className="text-xs text-slate-400 font-medium mt-1 flex items-center gap-1">
                       <UserCheck className="w-3.5 h-3.5 text-emerald-500" />
@@ -1969,21 +2001,25 @@ export default function RosterApp() {
                                   <td className="px-6 py-4">
                                     <span className={cn(
                                       "inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border",
-                                      abs.status === 'ATIVO' ? "bg-emerald-50 text-emerald-700 border-emerald-100" : "bg-slate-100 text-slate-700 border-slate-200"
+                                      resolveAbsenceStatus(abs) === 'ATIVO' ? "bg-emerald-50 text-emerald-700 border-emerald-100" :
+                                      resolveAbsenceStatus(abs) === 'AGENDADO' ? "bg-blue-50 text-blue-700 border-blue-100" :
+                                      resolveAbsenceStatus(abs) === 'CANCELADO' ? "bg-rose-50 text-rose-700 border-rose-100" : "bg-slate-100 text-slate-700 border-slate-200"
                                     )}>
-                                      {abs.status}
+                                      {resolveAbsenceStatus(abs)}
                                     </span>
                                   </td>
 
                                   <td className="px-6 py-4 text-right">
-                                    <button 
-                                      onClick={() => handleEndAbsence(abs.id)}
-                                      className="p-1.5 hover:bg-rose-50 text-rose-500 rounded-lg transition-colors inline-flex items-center gap-1 text-[11px] font-semibold"
-                                      title="Finalizar Afastamento"
-                                    >
-                                      <Trash2 className="w-4 h-4" />
-                                      <span className="hidden sm:inline">Finalizar</span>
-                                    </button>
+                                    {['ATIVO', 'AGENDADO'].includes(resolveAbsenceStatus(abs)) && (
+                                      <button 
+                                        onClick={() => handleEndAbsence(abs.id)}
+                                        className="p-1.5 hover:bg-rose-50 text-rose-500 rounded-lg transition-colors inline-flex items-center gap-1 text-[11px] font-semibold"
+                                        title={resolveAbsenceStatus(abs) === 'AGENDADO' ? 'Cancelar Afastamento' : 'Finalizar Afastamento'}
+                                      >
+                                        <Trash2 className="w-4 h-4" />
+                                        <span className="hidden sm:inline">{resolveAbsenceStatus(abs) === 'AGENDADO' ? 'Cancelar' : 'Finalizar'}</span>
+                                      </button>
+                                    )}
                                   </td>
                                 </tr>
                               ))}
@@ -2083,7 +2119,7 @@ export default function RosterApp() {
                       >
                         <option value="Todos">Status: Todos</option>
                         <option value="Ativo">Ativo</option>
-                        <option value="Afastado">Afastado / LTS</option>
+                        <option value="Afastado">Afastado</option>
                       </select>
 
                       <select
@@ -2155,7 +2191,7 @@ export default function RosterApp() {
                                 "px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase",
                                 mil.status === 'Ativo' ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
                               )}>
-                                {mil.status === 'Ativo' ? 'Ativo' : 'LTS / Disp'}
+                                {mil.status === 'Ativo' ? 'Ativo' : 'Afastado'}
                               </span>
                             </td>
                             <td className="p-4 text-center">
@@ -2289,27 +2325,11 @@ export default function RosterApp() {
                     </div>
 
                     <div className="space-y-1">
-                      <label className="text-xs font-semibold text-slate-700 block">Contagem de Serviços Inicial</label>
-                      <input 
-                        type="number"
-                        min="0"
-                        value={newMilDutyCount}
-                        onChange={e => setNewMilDutyCount(Number(e.target.value))}
-                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-medium focus:ring-2 focus:ring-slate-900 outline-hidden bg-white"
-                      />
+                      <label className="text-xs font-semibold text-slate-700 block">Situação operacional</label>
+                      <div className="min-h-[34px] px-3 py-2 border border-slate-200 rounded-lg text-[11px] leading-4 bg-slate-50 text-slate-600">
+                        Status é definido pela aba <strong>Afastamentos</strong>; a contagem de serviços é calculada automaticamente pela escala.
+                      </div>
                     </div>
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-xs font-semibold text-slate-700 block">Status de Saúde / Operabilidade</label>
-                    <select
-                      value={newMilStatus}
-                      onChange={e => setNewMilStatus(e.target.value as 'Ativo' | 'Afastado')}
-                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-medium focus:ring-2 focus:ring-slate-900 outline-hidden bg-white"
-                    >
-                      <option value="Ativo">Ativo / Pronto para Serviço</option>
-                      <option value="Afastado">Afastado (LTS / Licença)</option>
-                    </select>
                   </div>
 
                   <button
@@ -2596,26 +2616,20 @@ export default function RosterApp() {
 
                 <div className="space-y-1">
                   <label className="text-xs font-semibold text-slate-700 block">Serviços Cumpridos</label>
-                  <input 
-                    type="number"
-                    min="0"
-                    value={editingMil.dutyCount}
-                    onChange={e => setEditingMil({ ...editingMil, dutyCount: Number(e.target.value) })}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-medium focus:ring-2 focus:ring-slate-900 outline-hidden bg-white"
-                  />
+                  <div className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-bold bg-slate-50 text-slate-700">
+                    {editingMil.dutyCount} serviço(s) — cálculo automático
+                  </div>
                 </div>
               </div>
 
               <div className="space-y-1">
                 <label className="text-xs font-semibold text-slate-700 block">Situação de Prontidão</label>
-                <select
-                  value={editingMil.status}
-                  onChange={e => setEditingMil({ ...editingMil, status: e.target.value as 'Ativo' | 'Afastado' })}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-medium focus:ring-2 focus:ring-slate-900 outline-hidden bg-white"
-                >
-                  <option value="Ativo">Ativo / Pronto</option>
-                  <option value="Afastado">Afastado (LTS / Licença)</option>
-                </select>
+                <div className={cn(
+                  'w-full px-3 py-2 border rounded-lg text-xs font-semibold',
+                  editingMil.status === 'Ativo' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-rose-200 bg-rose-50 text-rose-800'
+                )}>
+                  {editingMil.status} — gerenciado exclusivamente pela aba Afastamentos
+                </div>
               </div>
 
               <div className="pt-4 border-t border-slate-200 flex justify-end gap-2">
