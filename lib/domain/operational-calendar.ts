@@ -1,6 +1,6 @@
 import { isMilitaryAbsentOnDate, localIsoDate, type AbsenceStatus } from './roster-integrity.ts';
 
-export type OperationalCalendarTab = 'inicio' | 'dashboard' | 'efetivo' | 'afastamentos' | 'cardapio';
+export type OperationalCalendarTab = 'inicio' | 'dashboard' | 'efetivo' | 'afastamentos' | 'cardapio' | 'profissional';
 
 export interface OperationalCalendarCell {
   militaryId: string;
