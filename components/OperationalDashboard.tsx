@@ -332,7 +332,7 @@ export function OperationalAlertsPanel({
           </button>
         ))}
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -493,6 +493,6 @@ function MetricCard({
       </div>
       <div className="text-2xl font-bold text-slate-900 mt-3">{value}</div>
       <div className="text-[11px] text-slate-500 mt-1">{detail}</div>
-    </div>
+    </button>
   );
 }
