@@ -40,6 +40,7 @@ import { useCloudData } from '@/hooks/use-cloud-data';
 import { validateCardapio } from '@/lib/persistence/validation';
 import { getCardapioReadiness } from '@/lib/domain/cardapio-readiness';
 import type { AuditEvent } from '@/lib/domain/professional-flows';
+import { cardapioMatchesSearch } from '@/lib/domain/operational-navigation';
 
 // Quick meal presets for fast editing
 const PRESET_PROTEINAS = [
@@ -751,6 +752,7 @@ export const initialWeeklyCardapio: WeeklyCardapioDoc = {
 interface CardapioSemanalProps {
   onNotify?: (msg: string, type?: 'success' | 'info') => void;
   onAudit?: (event: Omit<AuditEvent, 'id' | 'createdAt'>) => void;
+  searchQuery?: string;
 }
 
 const initialCardapioDocuments = [initialWeeklyCardapio];
@@ -759,13 +761,18 @@ function readLegacyCardapios(): WeeklyCardapioDoc[] | null {
   return raw === null ? null : JSON.parse(raw);
 }
 
-export default function CardapioSemanal({ onNotify, onAudit }: CardapioSemanalProps) {
+export default function CardapioSemanal({ onNotify, onAudit, searchQuery = '' }: CardapioSemanalProps) {
   const cardapioCloud = useCloudData({
     name: 'cardapios', initial: initialCardapioDocuments,
     validate: validateCardapio, legacy: readLegacyCardapios
   });
   const cardapiosList = cardapioCloud.state.records;
   const [selectedCardapioId, setSelectedCardapioId] = useState(initialWeeklyCardapio.id);
+  const matchingCardapios = cardapiosList.filter(item => cardapioMatchesSearch(item, searchQuery));
+  const selectedCardapioForSearch = cardapiosList.find(item => item.id === selectedCardapioId);
+  const cardapiosForSelector = selectedCardapioForSearch && !matchingCardapios.some(item => item.id === selectedCardapioId)
+    ? [selectedCardapioForSearch, ...matchingCardapios]
+    : matchingCardapios;
   const [selectionLoaded, setSelectionLoaded] = useState(false);
   useEffect(() => {
     try {
@@ -1618,12 +1625,17 @@ export default function CardapioSemanal({ onNotify, onAudit }: CardapioSemanalPr
               onChange={e => setSelectedCardapioId(e.target.value)}
               className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 bg-slate-50 focus:ring-2 focus:ring-emerald-800 outline-hidden"
             >
-              {cardapiosList.map(c => (
+              {cardapiosForSelector.map(c => (
                 <option key={c.id} value={c.id}>
                   {c.archivedAt ? '[ARQUIVADO] ' : ''}{formatCardapioTitle(c.dataInicio, c.dataFim)} ({c.workflow.status.replace('_', ' ')})
                 </option>
               ))}
             </select>
+            {searchQuery.trim() && (
+              <span className="shrink-0 px-2 py-1 rounded-full bg-slate-100 border border-slate-200 text-[10px] font-bold text-slate-500">
+                {matchingCardapios.length} resultado(s)
+              </span>
+            )}
 
             <button
               onClick={() => {

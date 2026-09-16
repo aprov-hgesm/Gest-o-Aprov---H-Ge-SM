@@ -29,8 +29,10 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '@/lib/utils';
 import CardapioSemanal, { gerarListaSaqueCarnes, initialWeeklyCardapio, type WeeklyCardapioDoc } from '@/components/CardapioSemanal';
-import OperationalDashboard, { OperationalAlertsPanel, buildOperationalSnapshot, type OperationalTab } from '@/components/OperationalDashboard';
+import OperationalDashboard, { OperationalAlertsPanel, buildOperationalSnapshot } from '@/components/OperationalDashboard';
+import OperationalContextBar from '@/components/OperationalContextBar';
 import ProfessionalFlows from '@/components/ProfessionalFlows';
+import type { OperationalTab, ProfessionalSection } from '@/lib/domain/operational-navigation';
 import { buildOperationalCalendar, mergeOperationalAlerts } from '@/lib/domain/operational-calendar';
 import SyncStatus from '@/components/SyncStatus';
 import { useCloudData } from '@/hooks/use-cloud-data';
@@ -471,6 +473,8 @@ export default function RosterApp() {
   const adminSettings = normalizeAdminSettings(rosterDocument.adminSettings);
   const militaryList = normalizeMilitaryStatuses(rosterDocument.militaryList, absences);
   const [activeTab, setActiveTab] = useState<OperationalTab>('inicio');
+  const [professionalSection, setProfessionalSection] = useState<ProfessionalSection>('historico');
+  const [cardapioSearch, setCardapioSearch] = useState('');
   
   // Sidebar state for mobile
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -482,6 +486,11 @@ export default function RosterApp() {
     setSelectedCell(null);
     setEditingMil(null);
     setSidebarOpen(false);
+  };
+
+  const openProfessional = (section: ProfessionalSection) => {
+    setProfessionalSection(section);
+    switchTab('profissional');
   };
 
   // ----------------------------------------------------
@@ -545,6 +554,37 @@ export default function RosterApp() {
   const [toast, setToast] = useState<{ show: boolean; msg: string; type: 'success' | 'info' }>({ show: false, msg: '', type: 'success' });
   const [alertsOpen, setAlertsOpen] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
+
+  const openRosterForMilitary = (militaryId: string, militaryName: string) => {
+    const mil = militaryList.find(item => item.id === militaryId);
+    setFilterMilitaryName(mil?.name || militaryName);
+    setFilterFunction('Todas as Funções');
+    setFilterScaleType('Todos');
+    setViewOption('Todos');
+    switchTab('dashboard');
+  };
+
+  const openMilitaryRecord = (militaryId: string, militaryName: string) => {
+    const mil = militaryList.find(item => item.id === militaryId);
+    setEfetivoSearch(mil?.name || militaryName);
+    setEfetivoFunctionFilter('Todas as Funções');
+    setEfetivoStatusFilter('Todos');
+    setEfetivoScaleFilter('Todas');
+    switchTab('efetivo');
+  };
+
+  const openAbsenceForMilitary = (mil: Military) => {
+    setAbsenceTypeFilter('Todos');
+    if (mil.status === 'Afastado') {
+      setAbsenceSearch(mil.name);
+      setAbsentMilId('');
+    } else {
+      setAbsenceSearch('');
+      setAbsentMilId(mil.id);
+      setAbsenceStart(localIsoDate());
+    }
+    switchTab('afastamentos');
+  };
 
   // One versioned document keeps personnel, absences, assignments and professional history consistent.
   const saveState = (
@@ -1380,7 +1420,7 @@ export default function RosterApp() {
 
           <div className="flex items-center gap-4">
             {/* Context-aware Search bar */}
-            {activeTab !== 'cardapio' && activeTab !== 'inicio' && activeTab !== 'profissional' && <div className="relative max-w-xs hidden md:block">
+            {activeTab !== 'inicio' && activeTab !== 'profissional' && <div className="relative max-w-xs hidden md:block">
               <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <input 
                 type="text" 
@@ -1389,6 +1429,8 @@ export default function RosterApp() {
                     ? "Filtrar militar na escala..." 
                     : activeTab === 'efetivo' 
                     ? "Buscar no efetivo militar..." 
+                    : activeTab === 'cardapio'
+                    ? "Buscar semana, refeição, corte..."
                     : "Buscar afastamento ou militar..."
                 } 
                 value={
@@ -1396,12 +1438,15 @@ export default function RosterApp() {
                     ? filterMilitaryName 
                     : activeTab === 'efetivo' 
                     ? efetivoSearch 
+                    : activeTab === 'cardapio'
+                    ? cardapioSearch
                     : absenceSearch
                 }
                 onChange={e => {
                   const val = e.target.value;
                   if (activeTab === 'dashboard') setFilterMilitaryName(val);
                   else if (activeTab === 'efetivo') setEfetivoSearch(val);
+                  else if (activeTab === 'cardapio') setCardapioSearch(val);
                   else setAbsenceSearch(val);
                 }}
                 className="w-64 pl-9 pr-4 py-1.5 bg-slate-100 rounded-full border-none focus:ring-1 focus:ring-emerald-800 text-xs text-slate-700"
@@ -1431,7 +1476,7 @@ export default function RosterApp() {
               )}
             </div>
 
-            <button onClick={() => switchTab('profissional')} className="p-2 text-slate-400 hover:bg-slate-100 rounded-full transition-colors" title="Configurações administrativas">
+            <button onClick={() => openProfessional('configuracoes')} className="p-2 text-slate-400 hover:bg-slate-100 rounded-full transition-colors" title="Configurações administrativas">
               <Settings className="w-5 h-5" />
             </button>
           </div>
@@ -1440,6 +1485,11 @@ export default function RosterApp() {
         {activeTab === 'inicio' && (
           <SyncStatus title="Cardápios semanais" state={cardapioCloud.state} controller={cardapioCloud.controller} />
         )}
+        <OperationalContextBar
+          activeTab={activeTab}
+          onNavigate={switchTab}
+          onOpenProfessional={openProfessional}
+        />
 
         {/* Scrollable Main Area */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
@@ -2291,6 +2341,20 @@ export default function RosterApp() {
                                   </td>
 
                                   <td className="px-6 py-4 text-right">
+                                    <button
+                                      onClick={() => openMilitaryRecord(abs.militaryId, abs.militaryName)}
+                                      className="p-1.5 hover:bg-emerald-50 text-slate-400 hover:text-emerald-800 rounded-lg transition-colors inline-flex items-center gap-1 text-[11px] font-semibold"
+                                      title="Abrir cadastro do militar"
+                                    >
+                                      <UserCheck className="w-4 h-4" />
+                                    </button>
+                                    <button
+                                      onClick={() => openRosterForMilitary(abs.militaryId, abs.militaryName)}
+                                      className="p-1.5 hover:bg-blue-50 text-slate-400 hover:text-blue-700 rounded-lg transition-colors inline-flex items-center gap-1 text-[11px] font-semibold"
+                                      title="Localizar militar na escala"
+                                    >
+                                      <Calendar className="w-4 h-4" />
+                                    </button>
                                     {['ATIVO', 'AGENDADO'].includes(resolveAbsenceStatus(abs)) && (
                                       <button 
                                         onClick={() => handleEndAbsence(abs.id)}
@@ -2473,7 +2537,21 @@ export default function RosterApp() {
                               </span>
                             </td>
                             <td className="p-4 text-center">
-                              <div className="flex gap-2 justify-center">
+                              <div className="flex gap-1 justify-center">
+                                <button
+                                  onClick={() => openRosterForMilitary(mil.id, mil.name)}
+                                  className="p-1.5 hover:bg-emerald-50 rounded text-slate-400 hover:text-emerald-800 transition-colors"
+                                  title="Localizar militar na escala"
+                                >
+                                  <Calendar className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => openAbsenceForMilitary(mil)}
+                                  className="p-1.5 hover:bg-amber-50 rounded text-slate-400 hover:text-amber-700 transition-colors"
+                                  title={mil.status === 'Afastado' ? 'Ver afastamento vigente' : 'Registrar afastamento'}
+                                >
+                                  <UserX className="w-3.5 h-3.5" />
+                                </button>
                                 <button
                                   onClick={() => { setEditingMilOriginal(clean(mil)); setEditingMil(clean(mil)); }}
                                   className="p-1.5 hover:bg-slate-100 rounded text-slate-500 hover:text-slate-950 transition-colors"
@@ -2616,7 +2694,7 @@ export default function RosterApp() {
 
           {/* TAB 4: CARDÁPIO SEMANAL (APROVISIONAMENTO HGeSM) */}
           {activeTab === 'cardapio' && (
-            <CardapioSemanal onNotify={showToast} onAudit={recordCardapioAudit} />
+            <CardapioSemanal onNotify={showToast} onAudit={recordCardapioAudit} searchQuery={cardapioSearch} />
           )}
 
           {/* BLOCO 3: FLUXOS PROFISSIONAIS */}
@@ -2631,6 +2709,8 @@ export default function RosterApp() {
               onRestoreCardapio={handleRestoreCardapio}
               onRestoreVersion={handleRestoreCardapioVersion}
               onSaveSettings={handleSaveAdminSettings}
+              initialSection={professionalSection}
+              onNavigate={switchTab}
             />
           )}
 
