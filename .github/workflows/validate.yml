@@ -32,8 +32,12 @@ jobs:
         run: bun run typecheck
       - name: Persistence and recovery tests
         run: bun run test
+      - name: Functional integrity tests
+        run: node --test tests/integrity-functional.test.ts
       - name: Manual roster selection rules
         run: node tests/manual-roster-selection-smoke.mjs
+      - name: Patient meat requisition regression
+        run: node tests/saque-paciente-regression.mjs
       - name: Firestore emulator and security rules
         run: bun run test:firestore
       - name: Production build
