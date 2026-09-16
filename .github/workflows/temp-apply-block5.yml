@@ -38,7 +38,8 @@ jobs:
           NODE_ENV: production
       - name: Commit validated Block 5 integration
         run: |
-          rm scripts/apply_block5.py .github/workflows/temp-apply-block5.yml
+          git checkout -- .github/workflows/validate.yml .github/workflows/temp-apply-block5.yml
+          rm scripts/apply_block5.py
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
