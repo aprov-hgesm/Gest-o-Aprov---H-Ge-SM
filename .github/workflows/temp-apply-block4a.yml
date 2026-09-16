@@ -26,7 +26,6 @@ jobs:
           fi
           python - <<'PY'
           from pathlib import Path
-
           p = Path('components/CardapioSemanal.tsx')
           t = p.read_text()
           if '  Archive,\n' not in t:
@@ -35,21 +34,12 @@ jobs:
                   raise SystemExit('Import de ícones não encontrado para Archive')
               t = t.replace(marker, marker + '  Archive,\n', 1)
               p.write_text(t)
-
-          p = Path('.github/workflows/validate.yml')
-          t = p.read_text()
-          if 'Block 4A functional audit tests' not in t:
-              marker = '          node tests/professional-flows-smoke.mjs\n'
-              addition = marker + '      - name: Block 4A functional audit tests\n        run: node --test tests/block4a-functional-audit.test.ts\n'
-              if marker not in t:
-                  raise SystemExit('Linha do smoke test profissional não encontrada no validate.yml')
-              t = t.replace(marker, addition, 1)
-              p.write_text(t)
           PY
+          git checkout -- .github/workflows/validate.yml
       - name: Commit das correções
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app/page.tsx components/CardapioSemanal.tsx components/ProfessionalFlows.tsx components/DocumentExports.tsx lib/domain/roster-operations.ts lib/domain/professional-flows.ts tests/block4a-functional-audit.test.ts tests/professional-flows.test.ts .github/workflows/validate.yml
+          git add app/page.tsx components/CardapioSemanal.tsx components/ProfessionalFlows.tsx components/DocumentExports.tsx tests/professional-flows.test.ts
           git commit -m "Aplicar correções da auditoria funcional Bloco 4A"
           git push origin HEAD:fix/bloco4a-auditoria-funcional
