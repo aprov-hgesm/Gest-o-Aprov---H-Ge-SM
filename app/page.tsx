@@ -28,11 +28,13 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '@/lib/utils';
-import CardapioSemanal from '@/components/CardapioSemanal';
+import CardapioSemanal, { gerarListaSaqueCarnes, initialWeeklyCardapio, type WeeklyCardapioDoc } from '@/components/CardapioSemanal';
+import OperationalDashboard, { OperationalAlertsPanel, buildOperationalSnapshot, type OperationalTab } from '@/components/OperationalDashboard';
+import { buildOperationalCalendar, mergeOperationalAlerts } from '@/lib/domain/operational-calendar';
 import SyncStatus from '@/components/SyncStatus';
 import { useCloudData } from '@/hooks/use-cloud-data';
 import { clean, equal } from '@/lib/persistence/core';
-import { validateRoster } from '@/lib/persistence/validation';
+import { validateCardapio, validateRoster } from '@/lib/persistence/validation';
 import { signOutUser } from '@/lib/firebase';
 import {
   isMilitaryAbsentOnDate, localIsoDate, normalizeMilitaryStatuses,
@@ -437,10 +439,19 @@ function readLegacyRoster(): RosterDocument[] | null {
   }];
 }
 
+function readLegacyCardapiosForCentral(): WeeklyCardapioDoc[] | null {
+  const raw = localStorage.getItem('dr_cardapios');
+  return raw === null ? null : JSON.parse(raw);
+}
+
 export default function RosterApp() {
   const rosterCloud = useCloudData({
     name: 'roster', initial: initialRosterDocuments,
     validate: validateRoster, legacy: readLegacyRoster
+  });
+  const cardapioCloud = useCloudData<WeeklyCardapioDoc>({
+    name: 'cardapios', initial: [initialWeeklyCardapio],
+    validate: validateCardapio, legacy: readLegacyCardapiosForCentral
   });
   // ==========================================
   // STATE MANAGEMENT
@@ -448,13 +459,13 @@ export default function RosterApp() {
   const rosterDocument = rosterCloud.state.records[0] ?? initialRosterDocuments[0];
   const { absences, roster, changelogs, customHolidays } = rosterDocument;
   const militaryList = normalizeMilitaryStatuses(rosterDocument.militaryList, absences);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'efetivo' | 'afastamentos' | 'cardapio'>('dashboard');
+  const [activeTab, setActiveTab] = useState<OperationalTab>('inicio');
   
   // Sidebar state for mobile
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // Tab switching helper with automatic modal and selection cleanup
-  const switchTab = (tab: 'dashboard' | 'efetivo' | 'afastamentos' | 'cardapio') => {
+  const switchTab = (tab: OperationalTab) => {
     setActiveTab(tab);
     setIsAssigning(false);
     setSelectedCell(null);
@@ -521,6 +532,7 @@ export default function RosterApp() {
 
   // Notification Toast state
   const [toast, setToast] = useState<{ show: boolean; msg: string; type: 'success' | 'info' }>({ show: false, msg: '', type: 'success' });
+  const [alertsOpen, setAlertsOpen] = useState(false);
 
   // One versioned document keeps personnel, absences and assignments consistent.
   const saveState = (
@@ -959,6 +971,30 @@ export default function RosterApp() {
 
   const { rate: complianceRate } = rosterCompliance(roster);
 
+  const operationalMeatItems = cardapioCloud.state.records.flatMap(item => gerarListaSaqueCarnes(item.dias));
+  const operationalCalendar = buildOperationalCalendar({
+    roster,
+    absences,
+    cardapios: cardapioCloud.state.records,
+    meatItems: operationalMeatItems,
+    horizonDays: 14,
+  });
+  const operationalSnapshotBase = buildOperationalSnapshot({
+    militaryList,
+    absences,
+    roster,
+    cardapios: cardapioCloud.state.records,
+    rosterPending: rosterCloud.state.pending,
+    cardapioPending: cardapioCloud.state.pending
+  });
+  const operationalSnapshot = {
+    ...operationalSnapshotBase,
+    alerts: mergeOperationalAlerts([
+      ...operationalSnapshotBase.alerts,
+      ...operationalCalendar.alerts,
+    ]),
+  };
+
   // Filter roster for display on Dashboard (Weekends & Custom Holidays)
   const daysToShow = Object.keys(roster)
     .sort((a, b) => ddmmyyyyToIso(a).localeCompare(ddmmyyyyToIso(b)))
@@ -1018,6 +1054,17 @@ export default function RosterApp() {
 
         {/* Navigation Modules */}
         <nav className="flex-1 px-3 py-4 space-y-1">
+          <button
+            onClick={() => switchTab('inicio')}
+            className={cn(
+              "w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-all text-left",
+              activeTab === 'inicio' ? "bg-emerald-950/40 text-emerald-300 border-l-4 border-emerald-600 font-semibold bg-slate-900" : "text-slate-400 hover:bg-slate-900/40 hover:text-slate-200"
+            )}
+          >
+            <ShieldAlert className="w-4 h-4" />
+            <span>Central Operacional</span>
+          </button>
+
           <button 
             onClick={() => switchTab('dashboard')}
             className={cn(
@@ -1093,6 +1140,7 @@ export default function RosterApp() {
             
             {/* Context Header Title */}
             <h2 className="font-bold text-slate-800 text-lg hidden sm:block">
+              {activeTab === 'inicio' && 'Central Operacional'}
               {activeTab === 'dashboard' && 'Gestão de Escalas'}
               {activeTab === 'efetivo' && 'Gerenciamento do Efetivo Militar'}
               {activeTab === 'afastamentos' && 'Gestão de Afastamentos'}
@@ -1102,7 +1150,7 @@ export default function RosterApp() {
 
           <div className="flex items-center gap-4">
             {/* Context-aware Search bar */}
-            {activeTab !== 'cardapio' && <div className="relative max-w-xs hidden md:block">
+            {activeTab !== 'cardapio' && activeTab !== 'inicio' && <div className="relative max-w-xs hidden md:block">
               <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <input 
                 type="text" 
@@ -1130,10 +1178,28 @@ export default function RosterApp() {
               />
             </div>}
 
-            <button className="p-2 text-slate-400 hover:bg-slate-100 rounded-full relative transition-colors">
-              <Bell className="w-5 h-5" />
-              <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-rose-500 rounded-full border-2 border-white" />
-            </button>
+            <div className="relative">
+              <button
+                onClick={() => setAlertsOpen(value => !value)}
+                className="p-2 text-slate-400 hover:bg-slate-100 rounded-full relative transition-colors"
+                aria-label="Abrir Central de Alertas"
+                aria-expanded={alertsOpen}
+              >
+                <Bell className="w-5 h-5" />
+                {operationalSnapshot.alerts.length > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 min-w-4 h-4 px-1 bg-rose-500 text-white text-[9px] font-bold rounded-full border-2 border-white flex items-center justify-center">
+                    {Math.min(99, operationalSnapshot.alerts.length)}
+                  </span>
+                )}
+              </button>
+              {alertsOpen && (
+                <OperationalAlertsPanel
+                  alerts={operationalSnapshot.alerts}
+                  onNavigate={switchTab}
+                  onClose={() => setAlertsOpen(false)}
+                />
+              )}
+            </div>
 
             <button className="p-2 text-slate-400 hover:bg-slate-100 rounded-full transition-colors">
               <Settings className="w-5 h-5" />
@@ -1141,9 +1207,17 @@ export default function RosterApp() {
           </div>
         </header>
         <SyncStatus title="Escalas e efetivo" state={rosterCloud.state} controller={rosterCloud.controller} />
+        {activeTab === 'inicio' && (
+          <SyncStatus title="Cardápios semanais" state={cardapioCloud.state} controller={cardapioCloud.controller} />
+        )}
 
         {/* Scrollable Main Area */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
+
+          {/* CENTRAL OPERACIONAL */}
+          {activeTab === 'inicio' && (
+            <OperationalDashboard snapshot={operationalSnapshot} calendarDays={operationalCalendar.days} onNavigate={switchTab} />
+          )}
 
           {/* TAB 1: DASHBOARD / GESTÃO DE ESCALAS */}
           {activeTab === 'dashboard' && (
