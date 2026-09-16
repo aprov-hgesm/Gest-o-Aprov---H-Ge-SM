@@ -120,6 +120,7 @@ export function buildOperationalSnapshot(params: {
   cardapios: WeeklyCardapioDoc[];
   rosterPending?: boolean;
   cardapioPending?: boolean;
+  saquePending?: boolean;
   today?: string;
 }): OperationalSnapshot {
   const today = params.today || localIsoDate();
@@ -232,7 +233,7 @@ export function buildOperationalSnapshot(params: {
         title: `${zeroQuantityItems.length} item(ns) de carne sem quantidade válida`,
         detail: 'Há corte selecionado com quantidade igual a zero no Saque de Carnes.',
         module: 'Saque',
-        actionTab: 'cardapio'
+        actionTab: 'saque'
       });
     }
     if (meatToday.length) {
@@ -242,12 +243,12 @@ export function buildOperationalSnapshot(params: {
         title: `Retirada de ${meatKgToday.toLocaleString('pt-BR')} kg de carnes hoje`,
         detail: `${meatToday.length} item(ns) programado(s) para retirada e descongelamento.`,
         module: 'Saque',
-        actionTab: 'cardapio'
+        actionTab: 'saque'
       });
     }
   }
 
-  if (params.rosterPending || params.cardapioPending) {
+  if (params.rosterPending || params.cardapioPending || params.saquePending) {
     alerts.unshift({
       id: 'sync-pending',
       severity: 'warning',
@@ -368,7 +369,7 @@ export default function OperationalDashboard({
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         <MetricCard icon={UserCheck} label="Efetivo disponível" value={snapshot.availableMilitary} detail={`${snapshot.absentMilitary} afastado(s) hoje`} onClick={() => onNavigate('efetivo')} />
         <MetricCard icon={CircleAlert} label="Postos vagos" value={snapshot.vacantPostsNext7} detail="Próximos 7 dias de escala" attention={snapshot.vacantPostsNext7 > 0} onClick={() => onNavigate('dashboard')} />
-        <MetricCard icon={Beef} label="Saque de carnes hoje" value={`${snapshot.meatKgToday.toLocaleString('pt-BR')} kg`} detail={`${snapshot.meatItemsToday} item(ns) para retirada`} onClick={() => onNavigate('cardapio')} />
+        <MetricCard icon={Beef} label="Saque de carnes hoje" value={`${snapshot.meatKgToday.toLocaleString('pt-BR')} kg`} detail={`${snapshot.meatItemsToday} item(ns) para retirada`} onClick={() => onNavigate('saque')} />
         <MetricCard icon={UtensilsCrossed} label="Prontidão do cardápio" value={snapshot.cardapioReadiness === null ? '—' : `${snapshot.cardapioReadiness}%`} detail={statusLabel} attention={(snapshot.cardapioReadiness ?? 100) < 100} onClick={() => onNavigate('cardapio')} />
       </div>
 

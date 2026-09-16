@@ -3,7 +3,7 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     match /aprov_workspaces/hgesm/{group}/{id} {
-      allow read, write: if group in ['roster', 'cardapios'];
+      allow read, write: if group in ['roster', 'cardapios', 'saques'];
     }
   }
 }
