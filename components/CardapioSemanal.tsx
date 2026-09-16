@@ -37,6 +37,7 @@ import html2canvas from 'html2canvas';
 import SyncStatus from '@/components/SyncStatus';
 import { useCloudData } from '@/hooks/use-cloud-data';
 import { validateCardapio } from '@/lib/persistence/validation';
+import { getCardapioReadiness } from '@/lib/domain/cardapio-readiness';
 
 // Quick meal presets for fast editing
 const PRESET_PROTEINAS = [
@@ -775,7 +776,13 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
 
   // New week creation modal
   const [isNewWeekModalOpen, setIsNewWeekModalOpen] = useState(false);
-  const [newWeekMonday, setNewWeekMonday] = useState('2026-09-21');
+  const [newWeekMonday, setNewWeekMonday] = useState(() => {
+    const now = new Date();
+    const day = now.getDay();
+    const distance = day === 1 ? 7 : (8 - day) % 7 || 7;
+    now.setDate(now.getDate() + distance);
+    return formatIsoDate(now);
+  });
 
   // Saque de Carnes Modal & PDF Generation State
   const [isSaqueCarnesModalOpen, setIsSaqueCarnesModalOpen] = useState(false);
@@ -862,6 +869,11 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
 
   // Update current cardapio helper
   const updateCurrentCardapio = (updated: WeeklyCardapioDoc) => {
+    const persisted = cardapiosList.find(c => c.id === updated.id);
+    if (persisted?.workflow.status === 'FINALIZADO' && updated.workflow.status !== 'EM_ELABORACAO') {
+      showToast('Cardápio finalizado está bloqueado para edição. Reabra o documento antes de alterar.', 'info');
+      return false;
+    }
     const updatedList = cardapiosList.some(c => c.id === updated.id)
       ? cardapiosList.map(c => c.id === updated.id ? updated : c)
       : [updated, ...cardapiosList];
@@ -870,6 +882,13 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
 
   // Advance workflow state
   const handleAdvanceWorkflow = () => {
+    const readiness = getCardapioReadiness(currentCardapio);
+    if (!readiness.ok) {
+      const preview = readiness.missing.slice(0, 3).join('; ');
+      const extra = readiness.missing.length > 3 ? ` (+${readiness.missing.length - 3} pendência(s))` : '';
+      showToast(`Cardápio com ${readiness.percent}% de prontidão. Corrija: ${preview}${extra}.`, 'info');
+      return;
+    }
     const currentStatus = currentCardapio.workflow.status;
     let nextStatus: WorkflowStatus = currentStatus;
     let message = '';
@@ -903,7 +922,9 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
     const updated = JSON.parse(JSON.stringify(currentCardapio)) as WeeklyCardapioDoc;
     updated.workflow.status = 'EM_ELABORACAO';
     updated.workflow.conferido.status = 'PENDENTE';
+    updated.workflow.conferido.data = undefined;
     updated.workflow.aprovado.status = 'PENDENTE';
+    updated.workflow.aprovado.data = undefined;
     if (!updateCurrentCardapio(updated)) return;
     showToast('Cardápio reaberto para edição (Em Elaboração).', 'info');
   };
@@ -1368,6 +1389,17 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
                   {currentCardapio.workflow.status === 'FINALIZADO' && 'Finalizado / Oficial'}
                 </span>
               </div>
+              {(() => {
+                const readiness = getCardapioReadiness(currentCardapio);
+                return (
+                  <span className={cn(
+                    'px-2.5 py-1 rounded-full text-xs font-bold border',
+                    readiness.ok ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-amber-50 text-amber-800 border-amber-200'
+                  )} title={readiness.ok ? 'Cardápio completo para avançar o fluxo' : readiness.missing.slice(0, 5).join(' • ')}>
+                    Prontidão {readiness.percent}%
+                  </span>
+                );
+              })()}
             </div>
             
             <p className="text-slate-500 text-xs mt-1">
@@ -1483,7 +1515,15 @@ export default function CardapioSemanal({ onNotify }: CardapioSemanalProps) {
             </select>
 
             <button
-              onClick={() => setIsNewWeekModalOpen(true)}
+              onClick={() => {
+                const latest = [...cardapiosList].sort((a, b) => b.dataInicio.localeCompare(a.dataInicio))[0];
+                if (latest) {
+                  const next = parseIsoDate(latest.dataInicio);
+                  next.setDate(next.getDate() + 7);
+                  setNewWeekMonday(formatIsoDate(next));
+                }
+                setIsNewWeekModalOpen(true);
+              }}
               className="flex items-center gap-1.5 px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-[#1e382b] border border-emerald-200/80 rounded-lg text-xs font-bold transition-colors"
               title="Criar nova semana de cardápio"
             >

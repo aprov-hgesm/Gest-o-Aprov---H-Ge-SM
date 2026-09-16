@@ -33,6 +33,11 @@ import SyncStatus from '@/components/SyncStatus';
 import { useCloudData } from '@/hooks/use-cloud-data';
 import { clean, equal } from '@/lib/persistence/core';
 import { validateRoster } from '@/lib/persistence/validation';
+import { signOutUser } from '@/lib/firebase';
+import {
+  isMilitaryAbsentOnDate, localIsoDate, normalizeMilitaryStatuses,
+  recalculateDutyCounts, resolveAbsenceStatus, rosterCompliance
+} from '@/lib/domain/roster-integrity';
 
 // ==========================================
 // TYPES & SCHEMAS
@@ -61,7 +66,9 @@ interface Absence {
   indefinite: boolean;
   notes: string;
   autoUpdate: boolean;
-  status: 'ATIVO' | 'AGENDADO';
+  status: 'ATIVO' | 'AGENDADO' | 'ENCERRADO' | 'CANCELADO';
+  actualEndDate?: string;
+  closedAt?: string;
 }
 
 interface RosterCell {
@@ -432,8 +439,9 @@ export default function RosterApp() {
   // ==========================================
   // STATE MANAGEMENT
   // ==========================================
-  const { militaryList, absences, roster, changelogs, customHolidays } =
-    rosterCloud.state.records[0] ?? initialRosterDocuments[0];
+  const rosterDocument = rosterCloud.state.records[0] ?? initialRosterDocuments[0];
+  const { absences, roster, changelogs, customHolidays } = rosterDocument;
+  const militaryList = normalizeMilitaryStatuses(rosterDocument.militaryList, absences);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'efetivo' | 'afastamentos' | 'cardapio'>('dashboard');
   
   // Sidebar state for mobile
@@ -452,12 +460,19 @@ export default function RosterApp() {
   // TAB 1: GESTÃO DE ESCALAS (Independent State)
   // ----------------------------------------------------
   const [isHolidayModalOpen, setIsHolidayModalOpen] = useState(false);
-  const [newHolidayDate, setNewHolidayDate] = useState('2026-09-18');
+  const [newHolidayDate, setNewHolidayDate] = useState(() => localIsoDate());
   const [newHolidayName, setNewHolidayName] = useState('');
 
   const [viewOption, setViewOption] = useState<'4 Finais de Semana' | '8 Finais de Semana' | 'Todos' | 'Personalizado'>('Todos');
-  const [startDateFilter, setStartDateFilter] = useState('2026-09-01');
-  const [endDateFilter, setEndDateFilter] = useState('2026-11-30');
+  const [startDateFilter, setStartDateFilter] = useState(() => {
+    const today = localIsoDate();
+    return `${today.slice(0, 8)}01`;
+  });
+  const [endDateFilter, setEndDateFilter] = useState(() => {
+    const date = new Date();
+    date.setMonth(date.getMonth() + 3);
+    return localIsoDate(date);
+  });
   const [filterMilitaryName, setFilterMilitaryName] = useState('');
   const [filterFunction, setFilterFunction] = useState('Todas as Funções');
   const [filterScaleType, setFilterScaleType] = useState<'Todos' | 'Fins de Semana' | 'Feriados'>('Todos');
@@ -511,8 +526,16 @@ export default function RosterApp() {
     newLogs: LogEntry[],
     newHolidays: HolidayDate[] = customHolidays
   ) => {
+    const normalizedAbsences = newAbs.map(absence => ({
+      ...absence,
+      status: resolveAbsenceStatus(absence)
+    }));
+    const normalizedMilitary = recalculateDutyCounts(
+      normalizeMilitaryStatuses(newMil, normalizedAbsences),
+      newRos
+    );
     return rosterCloud.controller.update([{
-      id: 'principal', militaryList: newMil, absences: newAbs,
+      id: 'principal', militaryList: normalizedMilitary, absences: normalizedAbsences,
       roster: newRos, changelogs: newLogs, customHolidays: newHolidays
     }]);
   };
@@ -539,15 +562,8 @@ export default function RosterApp() {
   // ==========================================
 
   // Helper: Check if a military has an active or scheduled absence covering a given day
-  const isMilitaryAbsentOnDay = (militaryId: string, dayStr: string, activeAbsences: Absence[] = absences): boolean => {
-    const dayISO = ddmmyyyyToIso(dayStr);
-    return activeAbsences.some(a => {
-      if (a.militaryId !== militaryId) return false;
-      if (a.status !== 'ATIVO' && a.status !== 'AGENDADO') return false;
-      if (a.indefinite) return dayISO >= a.startDate;
-      return dayISO >= a.startDate && dayISO <= a.endDate;
-    });
-  };
+  const isMilitaryAbsentOnDay = (militaryId: string, dayStr: string, activeAbsences: Absence[] = absences): boolean =>
+    isMilitaryAbsentOnDate(activeAbsences, militaryId, ddmmyyyyToIso(dayStr));
 
   // ==========================================
   // OPERAÇÃO MANUAL DA ESCALA
@@ -808,28 +824,25 @@ export default function RosterApp() {
     const mil = militaryList.find(m => m.id === absentMilId);
     if (!mil) return;
 
+    const today = localIsoDate();
+    const startDate = absenceStart || today;
     const newAbsence: Absence = {
       id: `afast-${Date.now()}`,
       militaryId: mil.id,
       militaryName: mil.name,
       rank: mil.rank,
       type: absenceType,
-      startDate: absenceStart || new Date().toISOString().split('T')[0],
-      endDate: absenceIndefinite ? 'Indefinido' : absenceEnd || new Date().toISOString().split('T')[0],
+      startDate,
+      endDate: absenceIndefinite ? 'Indefinido' : absenceEnd || today,
       indefinite: absenceIndefinite,
       notes: absenceNotes,
       autoUpdate: absenceAutoUpdate,
-      status: 'ATIVO'
+      status: startDate > today ? 'AGENDADO' : 'ATIVO'
     };
 
     const updatedAbsences = [newAbsence, ...absences];
-    const updatedMilList = clean(militaryList);
-
-    // Mark military as Afastado
+    const updatedMilList = normalizeMilitaryStatuses(clean(militaryList), updatedAbsences, today);
     const milIdx = updatedMilList.findIndex(m => m.id === mil.id);
-    if (milIdx !== -1) {
-      updatedMilList[milIdx].status = 'Afastado';
-    }
 
     // Auto update roster if checked: replace their active slots with "Dispensa"
     const updatedRoster = clean(roster);
@@ -868,35 +881,34 @@ export default function RosterApp() {
     showToast(`Afastamento de ${mil.name} registrado com sucesso!`);
   };
 
-  // Terminate a leave early
+  // Encerrar/cancelar sem apagar o histórico do afastamento
   const handleEndAbsence = (id: string) => {
     const abs = absences.find(a => a.id === id);
     if (!abs) return;
+    const today = localIsoDate();
+    const effectiveStatus = resolveAbsenceStatus(abs, today);
+    if (effectiveStatus === 'ENCERRADO' || effectiveStatus === 'CANCELADO') return;
+    const nextStatus: Absence['status'] = effectiveStatus === 'AGENDADO' ? 'CANCELADO' : 'ENCERRADO';
+    const updatedAbsences = absences.map(item => item.id === id ? {
+      ...item,
+      status: nextStatus,
+      actualEndDate: nextStatus === 'ENCERRADO' ? today : item.actualEndDate,
+      closedAt: new Date().toISOString()
+    } : item);
+    const updatedMilList = normalizeMilitaryStatuses(clean(militaryList), updatedAbsences, today);
 
-    const updatedAbsences = absences.filter(a => a.id !== id);
-    const updatedMilList = clean(militaryList);
-
-    // Set military back to Ativo only if no other active absences remain
-    const hasOtherAbsences = updatedAbsences.some(a => a.militaryId === abs.militaryId);
-    const milIdx = updatedMilList.findIndex(m => m.id === abs.militaryId);
-    if (milIdx !== -1 && !hasOtherAbsences) {
-      updatedMilList[milIdx].status = 'Ativo';
-    }
-
-    // Clean dispensa entries in roster
     const updatedRoster = clean(roster);
     Object.keys(updatedRoster).forEach(day => {
       Object.keys(updatedRoster[day]).forEach(post => {
         const cell = updatedRoster[day][post];
-        if (cell && cell.militaryId === abs.militaryId && cell.type === 'DISP') {
-          updatedRoster[day][post] = null;
-        }
+        if (cell && cell.militaryId === abs.militaryId && cell.type === 'DISP') updatedRoster[day][post] = null;
       });
     });
 
-    let logsList = addLog(`Retorno de afastamento homologado para ${abs.rank}. ${abs.militaryName}.`);
+    const action = nextStatus === 'CANCELADO' ? 'Afastamento agendado cancelado' : 'Retorno de afastamento homologado';
+    const logsList = addLog(`${action} para ${abs.rank}. ${abs.militaryName}.`);
     if (!saveState(updatedMilList, updatedAbsences, updatedRoster, logsList)) return;
-    showToast(`Militar ${abs.militaryName} retornou ao serviço ativo.`);
+    showToast(nextStatus === 'CANCELADO' ? `Afastamento de ${abs.militaryName} cancelado.` : `Militar ${abs.militaryName} retornou ao serviço ativo.`);
   };
 
   // Toggle military specialties
@@ -921,17 +933,14 @@ export default function RosterApp() {
       return acc;
     }, new Set<string>()).size;
 
-  const totalMedicalAway = absences.filter(a => a.type.includes('LTS') || a.type.includes('Atestado')).length;
+  const totalMedicalAway = absences.filter(a =>
+    resolveAbsenceStatus(a) === 'ATIVO' && (a.type.includes('LTS') || a.type.includes('Atestado'))
+  ).length;
   const pendingSwaps = Object.values(roster)
     .flatMap(dayObj => Object.values(dayObj))
     .filter(cell => cell && cell.type === 'PERM').length;
 
-  const totalPossibleSlots = Object.values(roster)
-    .flatMap(dayObj => Object.keys(dayObj)).length;
-  const filledSlots = Object.values(roster)
-    .flatMap(dayObj => Object.values(dayObj))
-    .filter(cell => cell !== null).length;
-  const complianceRate = totalPossibleSlots > 0 ? Math.round((filledSlots / totalPossibleSlots) * 100) : 100;
+  const { rate: complianceRate } = rosterCompliance(roster);
 
   // Filter roster for display on Dashboard (Weekends & Custom Holidays)
   const daysToShow = Object.keys(roster)
@@ -1043,7 +1052,7 @@ export default function RosterApp() {
             <HelpCircle className="w-4 h-4 text-emerald-500" />
             <span>Ajuda &amp; Informações</span>
           </button>
-          <button className="flex items-center gap-3 px-3 py-2 text-xs text-slate-400 hover:text-slate-200 transition-colors w-full rounded-lg hover:bg-slate-900/40">
+          <button onClick={() => void signOutUser()} className="flex items-center gap-3 px-3 py-2 text-xs text-slate-400 hover:text-slate-200 transition-colors w-full rounded-lg hover:bg-slate-900/40">
             <LogOut className="w-4 h-4 text-rose-500" />
             <span>Sair</span>
           </button>
@@ -1076,7 +1085,7 @@ export default function RosterApp() {
 
           <div className="flex items-center gap-4">
             {/* Context-aware Search bar */}
-            <div className="relative max-w-xs hidden md:block">
+            {activeTab !== 'cardapio' && <div className="relative max-w-xs hidden md:block">
               <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <input 
                 type="text" 
@@ -1102,7 +1111,7 @@ export default function RosterApp() {
                 }}
                 className="w-64 pl-9 pr-4 py-1.5 bg-slate-100 rounded-full border-none focus:ring-1 focus:ring-emerald-800 text-xs text-slate-700"
               />
-            </div>
+            </div>}
 
             <button className="p-2 text-slate-400 hover:bg-slate-100 rounded-full relative transition-colors">
               <Bell className="w-5 h-5" />
@@ -1969,21 +1978,25 @@ export default function RosterApp() {
                                   <td className="px-6 py-4">
                                     <span className={cn(
                                       "inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border",
-                                      abs.status === 'ATIVO' ? "bg-emerald-50 text-emerald-700 border-emerald-100" : "bg-slate-100 text-slate-700 border-slate-200"
+                                      resolveAbsenceStatus(abs) === 'ATIVO' ? "bg-emerald-50 text-emerald-700 border-emerald-100" :
+                                      resolveAbsenceStatus(abs) === 'AGENDADO' ? "bg-blue-50 text-blue-700 border-blue-100" :
+                                      resolveAbsenceStatus(abs) === 'CANCELADO' ? "bg-rose-50 text-rose-700 border-rose-100" : "bg-slate-100 text-slate-700 border-slate-200"
                                     )}>
-                                      {abs.status}
+                                      {resolveAbsenceStatus(abs)}
                                     </span>
                                   </td>
 
                                   <td className="px-6 py-4 text-right">
-                                    <button 
-                                      onClick={() => handleEndAbsence(abs.id)}
-                                      className="p-1.5 hover:bg-rose-50 text-rose-500 rounded-lg transition-colors inline-flex items-center gap-1 text-[11px] font-semibold"
-                                      title="Finalizar Afastamento"
-                                    >
-                                      <Trash2 className="w-4 h-4" />
-                                      <span className="hidden sm:inline">Finalizar</span>
-                                    </button>
+                                    {['ATIVO', 'AGENDADO'].includes(resolveAbsenceStatus(abs)) && (
+                                      <button 
+                                        onClick={() => handleEndAbsence(abs.id)}
+                                        className="p-1.5 hover:bg-rose-50 text-rose-500 rounded-lg transition-colors inline-flex items-center gap-1 text-[11px] font-semibold"
+                                        title={resolveAbsenceStatus(abs) === 'AGENDADO' ? 'Cancelar Afastamento' : 'Finalizar Afastamento'}
+                                      >
+                                        <Trash2 className="w-4 h-4" />
+                                        <span className="hidden sm:inline">{resolveAbsenceStatus(abs) === 'AGENDADO' ? 'Cancelar' : 'Finalizar'}</span>
+                                      </button>
+                                    )}
                                   </td>
                                 </tr>
                               ))}

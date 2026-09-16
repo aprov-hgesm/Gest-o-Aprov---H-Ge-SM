@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { FileDown, X } from 'lucide-react';
 import jsPDF from 'jspdf';
+import { normalizeMilitaryStatuses, resolveAbsenceStatus } from '@/lib/domain/roster-integrity';
 
 type ScaleType = 'EP' | 'EV' | 'Ambas';
 
@@ -37,7 +38,9 @@ type Absence = {
   indefinite: boolean;
   notes: string;
   autoUpdate: boolean;
-  status: 'ATIVO' | 'AGENDADO';
+  status: 'ATIVO' | 'AGENDADO' | 'ENCERRADO' | 'CANCELADO';
+  actualEndDate?: string;
+  closedAt?: string;
 };
 
 type HolidayDate = { id: string; date: string; name: string };
@@ -269,7 +272,7 @@ function exportPersonnel(data: RosterDocument) {
 
 function exportAbsences(data: RosterDocument) {
   const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4', compress: true });
-  const active = data.absences.filter(item => item.status === 'ATIVO').length;
+  const active = data.absences.filter(item => resolveAbsenceStatus(item) === 'ATIVO').length;
   let y = addHeader(pdf, 'RELATÓRIO DE AFASTAMENTOS', `${active} ativo(s) de ${data.absences.length} registro(s)`);
   const rows = [...data.absences]
     .sort((a, b) => (a.status === b.status ? isoFromDate(a.startDate).localeCompare(isoFromDate(b.startDate)) : a.status === 'ATIVO' ? -1 : 1))
@@ -278,7 +281,7 @@ function exportAbsences(data: RosterDocument) {
       item.type,
       brDate(item.startDate),
       item.indefinite ? 'Indeterminado' : brDate(item.endDate),
-      item.status,
+      resolveAbsenceStatus(item),
       item.autoUpdate ? 'Sim' : 'Não',
       item.notes || '—',
     ]);
@@ -292,9 +295,10 @@ function exportAbsences(data: RosterDocument) {
 
 function exportGeneralReport(data: RosterDocument) {
   const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4', compress: true });
-  const activeMilitary = data.militaryList.filter(item => item.status === 'Ativo').length;
-  const awayMilitary = data.militaryList.filter(item => item.status === 'Afastado').length;
-  const activeAbsences = data.absences.filter(item => item.status === 'ATIVO').length;
+  const normalizedMilitary = normalizeMilitaryStatuses(data.militaryList, data.absences);
+  const activeMilitary = normalizedMilitary.filter(item => item.status === 'Ativo').length;
+  const awayMilitary = normalizedMilitary.filter(item => item.status === 'Afastado').length;
+  const activeAbsences = data.absences.filter(item => resolveAbsenceStatus(item) === 'ATIVO').length;
   const allSlots = Object.values(data.roster).flatMap(day => Object.values(day));
   const filledSlots = allSlots.filter(Boolean).length;
   const occupation = allSlots.length ? Math.round((filledSlots / allSlots.length) * 100) : 0;
