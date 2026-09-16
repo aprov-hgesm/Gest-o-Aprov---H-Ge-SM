@@ -49,6 +49,8 @@ export interface SwapRecord {
   note?: string;
 }
 
+export type SwapOperationalStatus = 'ATIVA' | 'CONCLUIDA' | 'CANCELADA';
+
 export interface AdminSettings {
   rosterPosts: string[];
   absenceTypes: string[];
@@ -139,4 +141,22 @@ export function splitLines(value: string): string[] {
     .split(/\r?\n/)
     .map(item => item.trim())
     .filter(Boolean)));
+}
+
+export function swapDayToIso(day: string): string {
+  const parts = day.split('/');
+  if (parts.length !== 3) return day;
+  return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+}
+
+function todayIso(date = new Date()): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+export function resolveSwapOperationalStatus(swap: Pick<SwapRecord, 'day' | 'status'>, referenceIso = todayIso()): SwapOperationalStatus {
+  if (swap.status === 'CANCELADA') return 'CANCELADA';
+  return swapDayToIso(swap.day) < referenceIso ? 'CONCLUIDA' : 'ATIVA';
 }
