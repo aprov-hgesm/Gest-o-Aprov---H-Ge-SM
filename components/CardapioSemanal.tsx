@@ -753,6 +753,7 @@ interface CardapioSemanalProps {
   onNotify?: (msg: string, type?: 'success' | 'info') => void;
   onAudit?: (event: Omit<AuditEvent, 'id' | 'createdAt'>) => void;
   searchQuery?: string;
+  focusDate?: string;
 }
 
 const initialCardapioDocuments = [initialWeeklyCardapio];
@@ -761,7 +762,7 @@ function readLegacyCardapios(): WeeklyCardapioDoc[] | null {
   return raw === null ? null : JSON.parse(raw);
 }
 
-export default function CardapioSemanal({ onNotify, onAudit, searchQuery = '' }: CardapioSemanalProps) {
+export default function CardapioSemanal({ onNotify, onAudit, searchQuery = '', focusDate = '' }: CardapioSemanalProps) {
   const cardapioCloud = useCloudData({
     name: 'cardapios', initial: initialCardapioDocuments,
     validate: validateCardapio, legacy: readLegacyCardapios
@@ -802,6 +803,17 @@ export default function CardapioSemanal({ onNotify, onAudit, searchQuery = '' }:
   // Active day being edited in structured modal/drawer
   const [editingDayIndex, setEditingDayIndex] = useState<number | null>(null);
   const [editingFocusMeal, setEditingFocusMeal] = useState<'all' | 'cafe' | 'colacao' | 'almoco' | 'jantar' | 'ceia'>('all');
+  useEffect(() => {
+    if (!focusDate || cardapioCloud.state.status === 'loading') return;
+    const target = cardapiosList.find(item => item.dias.some(day => day.date === focusDate));
+    if (!target || target.archivedAt) return;
+    const dayIndex = target.dias.findIndex(day => day.date === focusDate);
+    if (dayIndex < 0) return;
+    setSelectedCardapioId(target.id);
+    setActiveSubView('EDITOR');
+    setEditingDayIndex(dayIndex);
+    setEditingFocusMeal('all');
+  }, [focusDate, cardapiosList, cardapioCloud.state.status]);
   const [copySourceDayIndex, setCopySourceDayIndex] = useState<number | ''>('');
   const [showMealSuggestions, setShowMealSuggestions] = useState(false);
   const [showMeatShortcuts, setShowMeatShortcuts] = useState(false);

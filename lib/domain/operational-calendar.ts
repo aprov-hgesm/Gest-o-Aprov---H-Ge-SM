@@ -1,6 +1,6 @@
 import { isMilitaryAbsentOnDate, localIsoDate, type AbsenceStatus } from './roster-integrity.ts';
 
-export type OperationalCalendarTab = 'inicio' | 'dashboard' | 'efetivo' | 'afastamentos' | 'cardapio' | 'profissional';
+export type OperationalCalendarTab = 'inicio' | 'dashboard' | 'efetivo' | 'afastamentos' | 'cardapio' | 'saque' | 'profissional';
 
 export interface OperationalCalendarCell {
   militaryId: string;
@@ -184,7 +184,7 @@ export function buildOperationalCalendar(params: {
         title: `Retirada de carnes programada para ${weekdayLabel(iso)}`,
         detail: `${meatKg.toLocaleString('pt-BR')} kg em ${meatForDay.length} item(ns) estão previstos para ${formatShort(iso)}. Confirme a data operacional de retirada.`,
         module: 'Saque',
-        actionTab: 'cardapio',
+        actionTab: 'saque',
       });
     }
   }

@@ -7,7 +7,7 @@ import {
   type Attempt, type Identified, type RecordMap, type StoredRecord
 } from './core.ts';
 
-export type CollectionName = 'roster' | 'cardapios';
+export type CollectionName = 'roster' | 'cardapios' | 'saques';
 export interface CloudPort<T extends Identified> {
   listen(next: (records: RecordMap<T>) => void, error: (error: unknown) => void): Unsubscribe;
   commit(attempt: Attempt<T>): Promise<RecordMap<T>>;

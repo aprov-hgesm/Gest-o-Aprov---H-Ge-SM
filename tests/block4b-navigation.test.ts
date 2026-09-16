@@ -6,7 +6,7 @@ import {
   type OperationalTab,
 } from '../lib/domain/operational-navigation.ts';
 
-const tabs: OperationalTab[] = ['inicio', 'dashboard', 'efetivo', 'afastamentos', 'cardapio', 'profissional'];
+const tabs: OperationalTab[] = ['inicio', 'dashboard', 'efetivo', 'afastamentos', 'cardapio', 'saque', 'profissional'];
 
 test('cada módulo possui contexto e atalhos operacionais', () => {
   for (const tab of tabs) {

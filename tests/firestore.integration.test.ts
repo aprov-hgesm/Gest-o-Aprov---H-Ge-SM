@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { initializeApp, deleteApp } from 'firebase/app';
 import { getFirestore, connectFirestoreEmulator, collection, getDocs, setDoc, doc, deleteDoc } from 'firebase/firestore';
 import { firestorePort } from '../lib/persistence/firestore.ts';
-import { validateCardapio } from '../lib/persistence/validation.ts';
+import { validateCardapio, validateSaqueOperational } from '../lib/persistence/validation.ts';
 import { SyncConflict, type RecordMap } from '../lib/persistence/core.ts';
 
 const host = process.env.FIRESTORE_EMULATOR_HOST;
@@ -31,15 +31,25 @@ test('real Firestore transactions, subscriptions, conflicts, idempotency and sin
   });
   const portOne = firestorePort<ReturnType<typeof sample>>(one.db, 'cardapios', validateCardapio);
   const portTwo = firestorePort<ReturnType<typeof sample>>(two.db, 'cardapios', validateCardapio);
+  const saquePort = firestorePort<any>(one.db, 'saques', validateSaqueOperational);
   const id = 'integration-' + Date.now(), data = sample(id);
   try {
     for (const denied of [anonymous, wrongAccount, unverified]) {
       await assert.rejects(getDocs(collection(denied.db, 'aprov_workspaces/hgesm/cardapios')),
         (error: unknown) => !!error && typeof error === 'object' && 'code' in error && error.code === 'permission-denied');
+      await assert.rejects(getDocs(collection(denied.db, 'aprov_workspaces/hgesm/saques')),
+        (error: unknown) => !!error && typeof error === 'object' && 'code' in error && error.code === 'permission-denied');
     }
     const attempt = { id: 'create-' + id, changes: [{ id, data, deleted: false, expectedRevision: 0 }] };
     const first = await portOne.commit(attempt);
     assert.equal(first[id].revision, 1);
+    const saqueId = 'saque-integration-' + Date.now();
+    const saqueData = {
+      id: saqueId, cardapioId: id, saqueItemId: 'item-1', status: 'SEPARADO',
+      updatedAt: new Date().toISOString(), history: [{ status: 'SEPARADO', at: new Date().toISOString() }]
+    };
+    const saqueCreated = await saquePort.commit({ id: 'create-' + saqueId, changes: [{ id: saqueId, data: saqueData, deleted: false, expectedRevision: 0 }] });
+    assert.equal(saqueCreated[saqueId].revision, 1);
     const replay = await portTwo.commit(attempt);
     assert.equal(replay[id].revision, 1);
     const observed = await new Promise<RecordMap<ReturnType<typeof sample>>>((resolve, reject) => {

@@ -24,20 +24,23 @@ import {
   UserCheck,
   MousePointerClick,
   Eraser,
-  UtensilsCrossed
+  UtensilsCrossed,
+  Beef
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '@/lib/utils';
 import CardapioSemanal, { gerarListaSaqueCarnes, initialWeeklyCardapio, type WeeklyCardapioDoc } from '@/components/CardapioSemanal';
+import SaqueCarnesOperacional from '@/components/SaqueCarnesOperacional';
 import OperationalDashboard, { OperationalAlertsPanel, buildOperationalSnapshot } from '@/components/OperationalDashboard';
 import OperationalContextBar from '@/components/OperationalContextBar';
 import ProfessionalFlows from '@/components/ProfessionalFlows';
 import type { OperationalTab, ProfessionalSection } from '@/lib/domain/operational-navigation';
+import type { SaqueOperationalRecord } from '@/lib/domain/saque-operacional';
 import { buildOperationalCalendar, mergeOperationalAlerts } from '@/lib/domain/operational-calendar';
 import SyncStatus from '@/components/SyncStatus';
 import { useCloudData } from '@/hooks/use-cloud-data';
 import { clean, equal } from '@/lib/persistence/core';
-import { validateCardapio, validateRoster } from '@/lib/persistence/validation';
+import { validateCardapio, validateRoster, validateSaqueOperational } from '@/lib/persistence/validation';
 import { signOutUser } from '@/lib/firebase';
 import {
   isMilitaryAbsentOnDate, localIsoDate, normalizeMilitaryStatuses,
@@ -463,6 +466,10 @@ export default function RosterApp() {
     name: 'cardapios', initial: [initialWeeklyCardapio],
     validate: validateCardapio, legacy: readLegacyCardapiosForCentral
   });
+  const saqueCloud = useCloudData<SaqueOperationalRecord>({
+    name: 'saques', initial: [],
+    validate: validateSaqueOperational, legacy: () => null
+  });
   // ==========================================
   // STATE MANAGEMENT
   // ==========================================
@@ -475,6 +482,7 @@ export default function RosterApp() {
   const [activeTab, setActiveTab] = useState<OperationalTab>('inicio');
   const [professionalSection, setProfessionalSection] = useState<ProfessionalSection>('historico');
   const [cardapioSearch, setCardapioSearch] = useState('');
+  const [cardapioFocusDate, setCardapioFocusDate] = useState('');
   
   // Sidebar state for mobile
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -491,6 +499,12 @@ export default function RosterApp() {
   const openProfessional = (section: ProfessionalSection) => {
     setProfessionalSection(section);
     switchTab('profissional');
+  };
+
+  const openCardapioDay = (dateIso: string) => {
+    setCardapioFocusDate(dateIso);
+    setCardapioSearch(dateIso);
+    switchTab('cardapio');
   };
 
   // ----------------------------------------------------
@@ -1240,7 +1254,8 @@ export default function RosterApp() {
     roster,
     cardapios: operationalCardapios,
     rosterPending: rosterCloud.state.pending,
-    cardapioPending: cardapioCloud.state.pending
+    cardapioPending: cardapioCloud.state.pending,
+    saquePending: saqueCloud.state.pending
   });
   const operationalSnapshot = {
     ...operationalSnapshotBase,
@@ -1368,6 +1383,17 @@ export default function RosterApp() {
           </button>
 
           <button
+            onClick={() => switchTab('saque')}
+            className={cn(
+              "w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-all text-left",
+              activeTab === 'saque' ? "bg-emerald-950/40 text-emerald-300 border-l-4 border-emerald-600 font-semibold bg-slate-900" : "text-slate-400 hover:bg-slate-900/40 hover:text-slate-200"
+            )}
+          >
+            <Beef className="w-4 h-4" />
+            <span>Saque de Carnes</span>
+          </button>
+
+          <button
             onClick={() => switchTab('profissional')}
             className={cn(
               "w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-all text-left",
@@ -1414,13 +1440,14 @@ export default function RosterApp() {
               {activeTab === 'efetivo' && 'Gerenciamento do Efetivo Militar'}
               {activeTab === 'afastamentos' && 'Gestão de Afastamentos'}
               {activeTab === 'cardapio' && 'Cardápio Semanal de Aprovisionamento'}
+              {activeTab === 'saque' && 'Saque de Carnes'}
               {activeTab === 'profissional' && 'Fluxos Profissionais e Histórico'}
             </h2>
           </div>
 
           <div className="flex items-center gap-4">
             {/* Context-aware Search bar */}
-            {activeTab !== 'inicio' && activeTab !== 'profissional' && <div className="relative max-w-xs hidden md:block">
+            {activeTab !== 'inicio' && activeTab !== 'profissional' && activeTab !== 'saque' && <div className="relative max-w-xs hidden md:block">
               <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <input 
                 type="text" 
@@ -1484,6 +1511,9 @@ export default function RosterApp() {
         <SyncStatus title="Escalas e efetivo" state={rosterCloud.state} controller={rosterCloud.controller} />
         {activeTab === 'inicio' && (
           <SyncStatus title="Cardápios semanais" state={cardapioCloud.state} controller={cardapioCloud.controller} />
+        )}
+        {(activeTab === 'inicio' || activeTab === 'saque') && (
+          <SyncStatus title="Operação do Saque de Carnes" state={saqueCloud.state} controller={saqueCloud.controller} />
         )}
         <OperationalContextBar
           activeTab={activeTab}
@@ -2694,7 +2724,19 @@ export default function RosterApp() {
 
           {/* TAB 4: CARDÁPIO SEMANAL (APROVISIONAMENTO HGeSM) */}
           {activeTab === 'cardapio' && (
-            <CardapioSemanal onNotify={showToast} onAudit={recordCardapioAudit} searchQuery={cardapioSearch} />
+            <CardapioSemanal onNotify={showToast} onAudit={recordCardapioAudit} searchQuery={cardapioSearch} focusDate={cardapioFocusDate} />
+          )}
+
+          {/* BLOCO 5: SAQUE DE CARNES OPERACIONAL */}
+          {activeTab === 'saque' && (
+            <SaqueCarnesOperacional
+              cardapios={cardapioCloud.state.records}
+              records={saqueCloud.state.records}
+              holidays={customHolidays}
+              onUpdateRecords={(records) => saqueCloud.controller.update(records)}
+              onOpenCardapioDay={openCardapioDay}
+              onNotify={showToast}
+            />
           )}
 
           {/* BLOCO 3: FLUXOS PROFISSIONAIS */}
@@ -2731,7 +2773,8 @@ export default function RosterApp() {
             <div className="p-6 grid md:grid-cols-2 gap-4 text-xs leading-relaxed">
               <div className="rounded-xl border border-slate-200 p-4"><strong className="text-slate-900">Central Operacional</strong><p className="text-slate-600 mt-1">Concentra alertas, calendário, afastamentos, postos vagos, cardápio e retiradas de carnes.</p></div>
               <div className="rounded-xl border border-slate-200 p-4"><strong className="text-slate-900">Escalas</strong><p className="text-slate-600 mt-1">A designação é manual. Afastamentos cadastrados são o único bloqueio automático de seleção por data.</p></div>
-              <div className="rounded-xl border border-slate-200 p-4"><strong className="text-slate-900">Cardápio e Saque</strong><p className="text-slate-600 mt-1">Use a prontidão antes de avançar o fluxo. Cardápios arquivados ficam somente para consulta até restauração.</p></div>
+              <div className="rounded-xl border border-slate-200 p-4"><strong className="text-slate-900">Cardápio</strong><p className="text-slate-600 mt-1">Use a prontidão antes de avançar o fluxo. Cardápios arquivados ficam somente para consulta até restauração.</p></div>
+              <div className="rounded-xl border border-slate-200 p-4"><strong className="text-slate-900">Saque de Carnes</strong><p className="text-slate-600 mt-1">Acompanhe retirada, separação e conclusão dos itens sem alterar o Cardápio Semanal de origem.</p></div>
               <div className="rounded-xl border border-slate-200 p-4"><strong className="text-slate-900">Fluxos Profissionais</strong><p className="text-slate-600 mt-1">Consulte histórico, permutas, versões, arquivamento e configurações administrativas.</p></div>
               <div className="md:col-span-2 rounded-xl border border-amber-200 bg-amber-50 p-4 text-amber-900"><strong>Sincronização:</strong> quando houver alteração pendente, aguarde a confirmação do servidor antes de tratar relatórios ou PDFs como documentos oficiais.</div>
             </div>

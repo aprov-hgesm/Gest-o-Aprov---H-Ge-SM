@@ -13,7 +13,10 @@ service cloud.firestore {
           value.militaryList is list && value.absences is list && value.roster is map &&
           value.changelogs is list && value.customHolidays is list) ||
          (group == 'cardapios' && value.dataInicio is string && value.dataFim is string &&
-          value.workflow is map && value.dias is list && value.dias.size() == 7));
+          value.workflow is map && value.dias is list && value.dias.size() == 7) ||
+         (group == 'saques' && value.cardapioId is string && value.saqueItemId is string &&
+          value.status in ['PENDENTE', 'SEPARADO', 'RETIRADO'] &&
+          value.updatedAt is string && value.history is list));
     }
     function validEnvelope(group, id) {
       let value = request.resource.data;
@@ -24,7 +27,7 @@ service cloud.firestore {
         value.updatedAt == request.time && validPayload(group, id);
     }
     match /aprov_workspaces/hgesm/{group}/{id} {
-      allow read: if group in ['roster', 'cardapios'] && authorizedUser();
+      allow read: if group in ['roster', 'cardapios', 'saques'] && authorizedUser();
       allow create: if authorizedUser() && validEnvelope(group, id) &&
         request.resource.data.revision == 1 && request.resource.data.deleted == false;
       allow update: if authorizedUser() && validEnvelope(group, id) &&
