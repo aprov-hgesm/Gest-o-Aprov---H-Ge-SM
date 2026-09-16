@@ -18,9 +18,15 @@ test('afastamento futuro permanece agendado e não afasta o militar hoje', () =>
   assert.equal(military.status, 'Ativo');
 });
 
-test('afastamento encerrado preservado no histórico não bloqueia escala', () => {
+test('afastamento encerrado preserva o período histórico e libera datas posteriores', () => {
   const absence = { militaryId: 'm1', startDate: '2026-09-01', endDate: '2026-09-30', indefinite: false, status: 'ENCERRADO' as const, actualEndDate: '2026-09-10' };
   assert.equal(resolveAbsenceStatus(absence, '2026-09-15'), 'ENCERRADO');
+  assert.equal(isMilitaryAbsentOnDate([absence], 'm1', '2026-09-05'), true);
+  assert.equal(isMilitaryAbsentOnDate([absence], 'm1', '2026-09-15'), false);
+});
+
+test('afastamento cancelado nunca bloqueia a escala', () => {
+  const absence = { militaryId: 'm1', startDate: '2026-09-10', endDate: '2026-09-20', indefinite: false, status: 'CANCELADO' as const };
   assert.equal(isMilitaryAbsentOnDate([absence], 'm1', '2026-09-15'), false);
 });
 
@@ -40,7 +46,7 @@ test('contagem de serviços e conformidade ignoram DISP', () => {
   assert.deepEqual(rosterCompliance(roster), { total: 3, filled: 1, rate: 33 });
 });
 
-test('prontidão rejeita cardápio incompleto e pares de carne sem quantidade', () => {
+test('prontidão rejeita cardápio incompleto e proteínas sem corte ou quantidade', () => {
   const day = {
     diaSemanaLabel: '2ª FEIRA', cafeManhaCeia: 'Café', colacaoPaciente: 'Fruta', ceia: 'Chá',
     almoco: {
@@ -58,4 +64,5 @@ test('prontidão rejeita cardápio incompleto e pares de carne sem quantidade', 
   const result = getCardapioReadiness(cardapio);
   assert.equal(result.ok, false);
   assert(result.missing.some(item => item.includes('informe a quantidade em kg')));
+  assert(result.missing.some(item => item.includes('proteína do jantar do paciente')));
 });
