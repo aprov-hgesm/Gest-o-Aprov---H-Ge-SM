@@ -23,8 +23,9 @@ const auditEvent = (value: unknown) => object(value) &&
   optional(value, 'entityId', 'string') && optional(value, 'previousValue', 'string') &&
   optional(value, 'newValue', 'string') && optional(value, 'note', 'string');
 const swap = (value: unknown) => object(value) &&
-  strings(value, ['id', 'day', 'post', 'originalMilitaryId', 'originalMilitaryName', 'originalRank',
+  strings(value, ['id', 'day', 'post', 'originalMilitaryId', 'originalMilitaryName', 'originalRank', 'originalType',
     'replacementMilitaryId', 'replacementMilitaryName', 'replacementRank', 'status', 'createdAt']) &&
+  ['EP', 'EV', 'PERM', 'DISP'].includes(String(value.originalType)) &&
   ['CONFIRMADA', 'CANCELADA'].includes(String(value.status)) &&
   optional(value, 'cancelledAt', 'string') && optional(value, 'note', 'string');
 const adminSettings = (value: unknown) => object(value) &&
