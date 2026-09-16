@@ -38,10 +38,11 @@ export function resolveAbsenceStatus(absence: AbsenceLike, referenceIso = localI
 }
 
 export function isAbsenceCoveringDate(absence: AbsenceLike, dateIso: string): boolean {
-  if (absence.status === 'ENCERRADO' || absence.status === 'CANCELADO') return false;
+  if (absence.status === 'CANCELADO') return false;
   if (dateIso < absence.startDate) return false;
-  if (absence.actualEndDate && dateIso > absence.actualEndDate) return false;
-  return absence.indefinite || dateIso <= absence.endDate;
+  if (absence.actualEndDate) return dateIso <= absence.actualEndDate;
+  if (absence.indefinite) return absence.status !== 'ENCERRADO';
+  return dateIso <= absence.endDate;
 }
 
 export function isMilitaryAbsentOnDate(absences: AbsenceLike[], militaryId: string, dateIso: string): boolean {
