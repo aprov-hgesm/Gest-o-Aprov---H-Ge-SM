@@ -21,7 +21,9 @@ for (const required of [
   'createCardapioVersionSnapshot',
   'archivedAt?: string',
   "action: 'REABERTURA'",
-  "message = 'Cardápio FINALIZADO e versão oficial preservada.'",
+  'handleConfirmFinalization',
+  "createCardapioVersionSnapshot(updated, 'Finalização oficial do cardápio')",
+  "showToast('Cardápio FINALIZADO e fechamento operacional registrado.')",
 ]) assert.ok(cardapio.includes(required), `CardapioSemanal.tsx deve conter: ${required}`);
 
 for (const required of [
