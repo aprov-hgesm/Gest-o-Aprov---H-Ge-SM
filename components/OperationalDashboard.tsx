@@ -464,6 +464,8 @@ export default function OperationalDashboard({
           </div>
         </section>
       </div>
+
+      <OperationalCalendar days={calendarDays} onNavigate={onNavigate} />
     </div>
   );
 }
@@ -489,8 +491,6 @@ function MetricCard({
       </div>
       <div className="text-2xl font-bold text-slate-900 mt-3">{value}</div>
       <div className="text-[11px] text-slate-500 mt-1">{detail}</div>
-      <OperationalCalendar days={calendarDays} onNavigate={onNavigate} />
-
     </div>
   );
 }
