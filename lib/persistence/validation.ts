@@ -63,6 +63,18 @@ function day(value: unknown): boolean {
 const cardapioVersion = (value: unknown) => object(value) &&
   strings(value, ['id', 'createdAt', 'reason', 'workflowStatus', 'snapshot']) &&
   typeof value.version === 'number' && Number.isSafeInteger(value.version) && value.version >= 1;
+const closureEvent = (value: unknown) => object(value) &&
+  strings(value, ['id', 'action', 'at', 'fromStatus', 'toStatus']) &&
+  ['CONFERENCIA', 'APROVACAO', 'FINALIZACAO', 'REABERTURA'].includes(String(value.action)) &&
+  typeof value.version === 'number' && Number.isSafeInteger(value.version) && value.version >= 1 &&
+  optional(value, 'responsibleDeclared', 'string') && optional(value, 'roleDeclared', 'string') && optional(value, 'note', 'string');
+const operationalClosure = (value: unknown) => object(value) &&
+  typeof value.cycle === 'number' && Number.isSafeInteger(value.cycle) && value.cycle >= 1 &&
+  typeof value.reopenCount === 'number' && Number.isSafeInteger(value.reopenCount) && value.reopenCount >= 0 &&
+  optional(value, 'lastFinalizedAt', 'string') &&
+  (value.lastFinalizedVersion === undefined || (typeof value.lastFinalizedVersion === 'number' && Number.isSafeInteger(value.lastFinalizedVersion))) &&
+  optional(value, 'lastReopenedAt', 'string') && optional(value, 'lastReopenReason', 'string') &&
+  list(value.events, closureEvent);
 export function validateCardapio(value: unknown): boolean {
   if (!object(value) || !strings(value, ['id', 'dataInicio', 'dataFim', 'dataEmissao', 'cidade', 'uf',
     'regiaoMilitar', 'organizacaoMilitar', 'divisao', 'lancheTexto', 'ceiaPacienteTexto',
@@ -71,12 +83,19 @@ export function validateCardapio(value: unknown): boolean {
     !strings(value.responsavelTecnico, ['nome', 'postoGraduacao', 'funcao']) ||
     (value.version !== undefined && (typeof value.version !== 'number' || !Number.isSafeInteger(value.version) || value.version < 1)) ||
     (value.versions !== undefined && !list(value.versions, cardapioVersion)) ||
+    (value.operationalClosure !== undefined && !operationalClosure(value.operationalClosure)) ||
     !optional(value, 'archivedAt', 'string') || !optional(value, 'archiveReason', 'string') || !optional(value, 'lastChangeReason', 'string') ||
     !Array.isArray(value.dias) || value.dias.length !== 7 || !value.dias.every(day)) return false;
   const workflow = value.workflow;
   return ['EM_ELABORACAO', 'CONFERIDO', 'APROVADO', 'FINALIZADO'].includes(String(workflow.status)) &&
     object(workflow.conferido) && strings(workflow.conferido, ['cargo', 'responsavel', 'status']) &&
-    object(workflow.aprovado) && strings(workflow.aprovado, ['cargo', 'responsavel', 'status']);
+    optional(workflow.conferido, 'data', 'string') && optional(workflow.conferido, 'dataHora', 'string') &&
+    object(workflow.aprovado) && strings(workflow.aprovado, ['cargo', 'responsavel', 'status']) &&
+    optional(workflow.aprovado, 'data', 'string') && optional(workflow.aprovado, 'dataHora', 'string') &&
+    (workflow.finalizado === undefined || (object(workflow.finalizado) &&
+      strings(workflow.finalizado, ['cargo', 'responsavel', 'status']) &&
+      ['PENDENTE', 'FINALIZADO'].includes(String(workflow.finalizado.status)) &&
+      optional(workflow.finalizado, 'data', 'string') && optional(workflow.finalizado, 'dataHora', 'string') && optional(workflow.finalizado, 'observacao', 'string')));
 }
 
 const saqueHistory = (value: unknown) => object(value) &&

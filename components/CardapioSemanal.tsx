@@ -39,6 +39,7 @@ import SyncStatus from '@/components/SyncStatus';
 import { useCloudData } from '@/hooks/use-cloud-data';
 import { validateCardapio } from '@/lib/persistence/validation';
 import { getCardapioReadiness } from '@/lib/domain/cardapio-readiness';
+import { appendCardapioClosureEvent, getCardapioClosureSummary, type CardapioOperationalClosure } from '@/lib/domain/cardapio-closure';
 import type { AuditEvent } from '@/lib/domain/professional-flows';
 import { cardapioMatchesSearch } from '@/lib/domain/operational-navigation';
 
@@ -183,13 +184,23 @@ export interface CardapioWorkflow {
     cargo: string;
     responsavel: string;
     data?: string;
+    dataHora?: string;
     status: 'PENDENTE' | 'CONFERIDO';
   };
   aprovado: {
     cargo: string;
     responsavel: string;
     data?: string;
+    dataHora?: string;
     status: 'PENDENTE' | 'APROVADO';
+  };
+  finalizado?: {
+    cargo: string;
+    responsavel: string;
+    data?: string;
+    dataHora?: string;
+    observacao?: string;
+    status: 'PENDENTE' | 'FINALIZADO';
   };
 }
 
@@ -235,6 +246,7 @@ export interface WeeklyCardapioDoc {
   archivedAt?: string;
   archiveReason?: string;
   lastChangeReason?: string;
+  operationalClosure?: CardapioOperationalClosure;
 }
 
 export function createCardapioVersionSnapshot(doc: WeeklyCardapioDoc, reason: string): CardapioVersionSnapshot {
@@ -821,6 +833,12 @@ export default function CardapioSemanal({ onNotify, onAudit, searchQuery = '', f
   // Institutional config modal
   const [isInstitutionalModalOpen, setIsInstitutionalModalOpen] = useState(false);
 
+  // Operational closure modal (declared responsibility only; no identity authentication).
+  const [isFinalizationModalOpen, setIsFinalizationModalOpen] = useState(false);
+  const [finalizerName, setFinalizerName] = useState('');
+  const [finalizerRole, setFinalizerRole] = useState('');
+  const [finalizationNote, setFinalizationNote] = useState('');
+
   // PDF Generation State
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
 
@@ -910,6 +928,7 @@ export default function CardapioSemanal({ onNotify, onAudit, searchQuery = '', f
   const currentCardapio: WeeklyCardapioDoc = 
     cardapiosList.find(c => c.id === selectedCardapioId) || cardapiosList[0] || initialWeeklyCardapio;
   const isArchivedCardapio = Boolean(currentCardapio.archivedAt);
+  const closureSummary = getCardapioClosureSummary(currentCardapio.operationalClosure, currentCardapio.workflow.status);
   useEffect(() => {
     if (isArchivedCardapio && activeSubView === 'EDITOR') setActiveSubView('A4');
   }, [isArchivedCardapio, activeSubView]);
@@ -946,8 +965,18 @@ export default function CardapioSemanal({ onNotify, onAudit, searchQuery = '', f
       candidate.workflow.status = 'EM_ELABORACAO';
       candidate.workflow.conferido.status = 'PENDENTE';
       candidate.workflow.conferido.data = undefined;
+      candidate.workflow.conferido.dataHora = undefined;
       candidate.workflow.aprovado.status = 'PENDENTE';
       candidate.workflow.aprovado.data = undefined;
+      candidate.workflow.aprovado.dataHora = undefined;
+      candidate.workflow.finalizado = undefined;
+      candidate.operationalClosure = appendCardapioClosureEvent(candidate.operationalClosure, {
+        action: 'REABERTURA',
+        fromStatus: persisted.workflow.status,
+        toStatus: 'EM_ELABORACAO',
+        version: candidate.version || 1,
+        note: 'Alteração de conteúdo após conferência/aprovação',
+      });
       showToast('Alteração no conteúdo criou nova versão e reabriu o cardápio para conferência.', 'info');
     }
 
@@ -967,7 +996,8 @@ export default function CardapioSemanal({ onNotify, onAudit, searchQuery = '', f
     return saved;
   };
 
-  // Advance workflow state
+  // Advance workflow state. Conference and approval use declared document responsibility,
+  // not authenticated identity. Finalization opens a dedicated operational closure step.
   const handleAdvanceWorkflow = () => {
     const readiness = getCardapioReadiness(currentCardapio);
     if (!readiness.ok) {
@@ -976,45 +1006,113 @@ export default function CardapioSemanal({ onNotify, onAudit, searchQuery = '', f
       showToast(`Cardápio com ${readiness.percent}% de prontidão. Corrija: ${preview}${extra}.`, 'info');
       return;
     }
+
     const currentStatus = currentCardapio.workflow.status;
-    let nextStatus: WorkflowStatus = currentStatus;
-    let message = '';
-    const nowStr = new Date().toLocaleDateString('pt-BR');
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const nowStr = now.toLocaleDateString('pt-BR');
+
+    if (currentStatus === 'APROVADO') {
+      setFinalizerName(currentCardapio.workflow.finalizado?.responsavel || currentCardapio.workflow.aprovado.responsavel || '');
+      setFinalizerRole(currentCardapio.workflow.finalizado?.cargo || currentCardapio.workflow.aprovado.cargo || '');
+      setFinalizationNote(currentCardapio.workflow.finalizado?.observacao || '');
+      setIsFinalizationModalOpen(true);
+      return;
+    }
+
+    if (currentStatus !== 'EM_ELABORACAO' && currentStatus !== 'CONFERIDO') return;
 
     const updated = JSON.parse(JSON.stringify(currentCardapio)) as WeeklyCardapioDoc;
+    const version = updated.version || 1;
+    let nextStatus: WorkflowStatus;
+    let message: string;
 
     if (currentStatus === 'EM_ELABORACAO') {
       nextStatus = 'CONFERIDO';
       updated.workflow.status = nextStatus;
       updated.workflow.conferido.status = 'CONFERIDO';
       updated.workflow.conferido.data = nowStr;
-      message = 'Cardápio marcado como CONFERIDO pelo Chefe Fiscal Adm.';
-    } else if (currentStatus === 'CONFERIDO') {
+      updated.workflow.conferido.dataHora = nowIso;
+      updated.operationalClosure = appendCardapioClosureEvent(updated.operationalClosure, {
+        action: 'CONFERENCIA', at: nowIso, fromStatus: currentStatus, toStatus: nextStatus, version,
+        responsibleDeclared: updated.workflow.conferido.responsavel,
+        roleDeclared: updated.workflow.conferido.cargo,
+      });
+      message = 'Cardápio marcado como CONFERIDO pelo responsável informado no documento.';
+    } else {
       nextStatus = 'APROVADO';
       updated.workflow.status = nextStatus;
       updated.workflow.aprovado.status = 'APROVADO';
       updated.workflow.aprovado.data = nowStr;
-      message = 'Cardápio APROVADO pela Diretora HGeSM.';
-    } else if (currentStatus === 'APROVADO') {
-      nextStatus = 'FINALIZADO';
-      updated.workflow.status = nextStatus;
-      updated.version = currentCardapio.version || 1;
-      const snapshot = createCardapioVersionSnapshot(updated, 'Finalização oficial do cardápio');
-      updated.versions = [snapshot, ...(currentCardapio.versions || []).filter(item => item.version !== snapshot.version)];
-      message = 'Cardápio FINALIZADO e versão oficial preservada.';
+      updated.workflow.aprovado.dataHora = nowIso;
+      updated.operationalClosure = appendCardapioClosureEvent(updated.operationalClosure, {
+        action: 'APROVACAO', at: nowIso, fromStatus: currentStatus, toStatus: nextStatus, version,
+        responsibleDeclared: updated.workflow.aprovado.responsavel,
+        roleDeclared: updated.workflow.aprovado.cargo,
+      });
+      message = 'Cardápio marcado como APROVADO pelo responsável informado no documento.';
     }
 
     if (!updateCurrentCardapio(updated)) return;
-    if (currentStatus !== nextStatus) {
-      onAudit?.({
-        module: 'Cardápio',
-        action: nextStatus === 'FINALIZADO' ? 'FINALIZACAO' : 'ALTERACAO',
-        entityType: 'Cardápio', entityId: currentCardapio.id,
-        summary: `Fluxo do cardápio ${currentCardapio.dataInicio} a ${currentCardapio.dataFim}: ${currentStatus} → ${nextStatus}.`,
-        previousValue: currentStatus, newValue: nextStatus
-      });
+    onAudit?.({
+      module: 'Cardápio', action: 'ALTERACAO', entityType: 'Cardápio', entityId: currentCardapio.id,
+      summary: `Fluxo do cardápio ${currentCardapio.dataInicio} a ${currentCardapio.dataFim}: ${currentStatus} → ${nextStatus}.`,
+      previousValue: currentStatus, newValue: nextStatus,
+      note: nextStatus === 'CONFERIDO'
+        ? `${updated.workflow.conferido.cargo}: ${updated.workflow.conferido.responsavel}`
+        : `${updated.workflow.aprovado.cargo}: ${updated.workflow.aprovado.responsavel}`,
+    });
+    showToast(message);
+  };
+
+  const handleConfirmFinalization = () => {
+    const name = finalizerName.trim();
+    const role = finalizerRole.trim();
+    if (!name || !role) {
+      showToast('Informe o responsável declarado e a função/cargo para concluir o fechamento.', 'info');
+      return;
     }
-    if (message) showToast(message);
+    if (currentCardapio.workflow.status !== 'APROVADO') {
+      showToast('Somente um cardápio aprovado pode ser finalizado.', 'info');
+      setIsFinalizationModalOpen(false);
+      return;
+    }
+    const readiness = getCardapioReadiness(currentCardapio);
+    if (!readiness.ok) {
+      showToast(`O cardápio voltou a apresentar pendências (${readiness.percent}% de prontidão).`, 'info');
+      return;
+    }
+
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const nowStr = now.toLocaleDateString('pt-BR');
+    const updated = JSON.parse(JSON.stringify(currentCardapio)) as WeeklyCardapioDoc;
+    const version = updated.version || 1;
+    updated.workflow.status = 'FINALIZADO';
+    updated.workflow.finalizado = {
+      cargo: role,
+      responsavel: name,
+      data: nowStr,
+      dataHora: nowIso,
+      observacao: finalizationNote.trim() || undefined,
+      status: 'FINALIZADO',
+    };
+    updated.operationalClosure = appendCardapioClosureEvent(updated.operationalClosure, {
+      action: 'FINALIZACAO', at: nowIso, fromStatus: 'APROVADO', toStatus: 'FINALIZADO', version,
+      responsibleDeclared: name, roleDeclared: role, note: finalizationNote,
+    });
+    const snapshot = createCardapioVersionSnapshot(updated, 'Finalização oficial do cardápio');
+    updated.versions = [snapshot, ...(currentCardapio.versions || []).filter(item => item.version !== snapshot.version)];
+
+    if (!updateCurrentCardapio(updated)) return;
+    onAudit?.({
+      module: 'Cardápio', action: 'FINALIZACAO', entityType: 'Cardápio', entityId: currentCardapio.id,
+      summary: `Cardápio ${currentCardapio.dataInicio} a ${currentCardapio.dataFim} finalizado operacionalmente.`,
+      previousValue: 'APROVADO', newValue: 'FINALIZADO',
+      note: `${role}: ${name}${finalizationNote.trim() ? ` — ${finalizationNote.trim()}` : ''}`,
+    });
+    setIsFinalizationModalOpen(false);
+    showToast('Cardápio FINALIZADO e fechamento operacional registrado.');
   };
 
   const handleReopenWorkflow = () => {
@@ -1023,6 +1121,7 @@ export default function CardapioSemanal({ onNotify, onAudit, searchQuery = '', f
       showToast('A reabertura exige um motivo para preservar a rastreabilidade.', 'info');
       return;
     }
+    const nowIso = new Date().toISOString();
     const updated = JSON.parse(JSON.stringify(currentCardapio)) as WeeklyCardapioDoc;
     const previousVersion = currentCardapio.version || 1;
     const snapshot = createCardapioVersionSnapshot({ ...currentCardapio, version: previousVersion }, `Estado preservado antes da reabertura: ${reason.trim()}`);
@@ -1032,8 +1131,16 @@ export default function CardapioSemanal({ onNotify, onAudit, searchQuery = '', f
     updated.workflow.status = 'EM_ELABORACAO';
     updated.workflow.conferido.status = 'PENDENTE';
     updated.workflow.conferido.data = undefined;
+    updated.workflow.conferido.dataHora = undefined;
     updated.workflow.aprovado.status = 'PENDENTE';
     updated.workflow.aprovado.data = undefined;
+    updated.workflow.aprovado.dataHora = undefined;
+    updated.workflow.finalizado = undefined;
+    updated.operationalClosure = appendCardapioClosureEvent(updated.operationalClosure, {
+      action: 'REABERTURA', at: nowIso,
+      fromStatus: currentCardapio.workflow.status, toStatus: 'EM_ELABORACAO',
+      version: previousVersion + 1, note: reason.trim(),
+    });
     if (!updateCurrentCardapio(updated)) return;
     onAudit?.({
       module: 'Cardápio', action: 'REABERTURA', entityType: 'Cardápio', entityId: currentCardapio.id,
@@ -1622,6 +1729,25 @@ export default function CardapioSemanal({ onNotify, onAudit, searchQuery = '', f
             >
               <Copy className="w-4 h-4" />
             </button>
+          </div>
+        </div>
+
+        {/* Operational closure trace */}
+        <div className="grid lg:grid-cols-[1.2fr_1fr_1fr] gap-3 rounded-xl border border-slate-200 bg-white p-3.5 shadow-2xs">
+          <div>
+            <div className="flex items-center gap-2"><ShieldCheck className="w-4 h-4 text-emerald-800" /><span className="text-xs font-bold uppercase tracking-wider text-slate-700">Fechamento operacional</span></div>
+            <div className="mt-1 text-xs text-slate-500">Ciclo {closureSummary.cycle} · {closureSummary.eventCount} registro(s) · {closureSummary.reopenCount} reabertura(s)</div>
+            <div className="mt-1 text-[10px] text-slate-400">Responsáveis são informados no documento; este fluxo não autentica a identidade do aprovador.</div>
+          </div>
+          <div className="text-xs">
+            <div className="font-semibold text-slate-700">Conferência / aprovação</div>
+            <div className="text-slate-500 mt-1">{currentCardapio.workflow.conferido.responsavel || 'Não informado'} · {currentCardapio.workflow.conferido.dataHora ? new Date(currentCardapio.workflow.conferido.dataHora).toLocaleString('pt-BR') : currentCardapio.workflow.conferido.status}</div>
+            <div className="text-slate-500">{currentCardapio.workflow.aprovado.responsavel || 'Não informado'} · {currentCardapio.workflow.aprovado.dataHora ? new Date(currentCardapio.workflow.aprovado.dataHora).toLocaleString('pt-BR') : currentCardapio.workflow.aprovado.status}</div>
+          </div>
+          <div className="text-xs">
+            <div className="font-semibold text-slate-700">Último fechamento</div>
+            <div className="text-slate-500 mt-1">{closureSummary.lastFinalizedAt ? new Date(closureSummary.lastFinalizedAt).toLocaleString('pt-BR') : 'Ainda não finalizado'}</div>
+            {closureSummary.lastReopenReason && <div className="text-amber-700 mt-1">Última reabertura: {closureSummary.lastReopenReason}</div>}
           </div>
         </div>
 
@@ -2311,6 +2437,30 @@ export default function CardapioSemanal({ onNotify, onAudit, searchQuery = '', f
 
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ------------------------------------------------------------------- */}
+      {/* OPERATIONAL CLOSURE: FINALIZATION                                   */}
+      {/* ------------------------------------------------------------------- */}
+      {isFinalizationModalOpen && (
+        <div className="fixed inset-0 bg-slate-950/40 backdrop-blur-xs z-[70] flex items-center justify-center p-4">
+          <motion.div initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-lg w-full overflow-hidden">
+            <div className="p-5 border-b border-slate-100 flex items-start justify-between">
+              <div><h3 className="font-bold text-slate-900">Finalizar fechamento operacional</h3><p className="text-xs text-slate-500 mt-1">Registre quem consta como responsável pelo fechamento desta versão.</p></div>
+              <button onClick={() => setIsFinalizationModalOpen(false)} className="p-1.5 rounded-lg hover:bg-slate-100"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-[11px] text-blue-900"><strong>Registro declarado:</strong> os campos abaixo documentam a responsabilidade informada. Não há autenticação da identidade do aprovador neste fluxo.</div>
+              <label className="block"><span className="text-xs font-bold text-slate-700">Responsável declarado</span><input value={finalizerName} onChange={e => setFinalizerName(e.target.value)} className="mt-1 w-full border border-slate-200 rounded-lg px-3 py-2 text-sm" placeholder="Nome informado no documento" /></label>
+              <label className="block"><span className="text-xs font-bold text-slate-700">Função / cargo</span><input value={finalizerRole} onChange={e => setFinalizerRole(e.target.value)} className="mt-1 w-full border border-slate-200 rounded-lg px-3 py-2 text-sm" placeholder="Ex.: Chefe da Seção" /></label>
+              <label className="block"><span className="text-xs font-bold text-slate-700">Observação de fechamento (opcional)</span><textarea value={finalizationNote} onChange={e => setFinalizationNote(e.target.value)} rows={3} className="mt-1 w-full border border-slate-200 rounded-lg px-3 py-2 text-sm resize-none" placeholder="Observação administrativa, se necessária" /></label>
+            </div>
+            <div className="p-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-2">
+              <button onClick={() => setIsFinalizationModalOpen(false)} className="px-4 py-2 rounded-lg border border-slate-200 bg-white text-xs font-bold text-slate-600">Cancelar</button>
+              <button onClick={handleConfirmFinalization} className="px-4 py-2 rounded-lg bg-[#1e382b] text-white text-xs font-bold flex items-center gap-2"><ShieldCheck className="w-4 h-4" />Finalizar e preservar versão</button>
+            </div>
+          </motion.div>
         </div>
       )}
 
